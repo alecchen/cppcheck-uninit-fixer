@@ -143,6 +143,7 @@ Creates `.bak` backup files before any modification.
 
 **Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
+**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing — the Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script.
 
 ### With compile_commands.json (best results)
 
@@ -165,6 +166,10 @@ bear -- ./build_script.sh
 
 # Both together
 ./cppcheck-fix-uninit.py uninit_test.cpp uninit_guarded_test.cpp
+
+# Verify #elif/#else guard chain tracking
+python3 test_elif_guards.py
+make check
 ```
 
 ## Supported Member Types
@@ -341,10 +346,6 @@ The script flags 3+ macro compound conditions for manual review. Run cppcheck ma
 cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
 ```
 
-### Build-system integration
-
-Without `-I` paths, headers fail to parse and `#if`-guarded members in headers are invisible. Always pass `-I` flags or use `compile_commands.json`.
-
 ### cppcheck limitations
 
 - Does not track `memset()`, placement `new`, or helper functions in the constructor body
@@ -381,8 +382,9 @@ bear -- ./build_script.sh
 |---|---|---|
 | `uninit_test.h/cpp` | 57 | All primitive/ptr/ref/volatile types, no guards |
 | `uninit_guarded_test.h/cpp` | 15 | 6 feature flags, compound `&&`/`\|\|`/`!` guards |
+| `test_elif_guards.py` | — | Unit test for `#elif`/`#else` guard chain tracking |
 
-Regenerate with `./generate_test.sh`.
+Regenerate with `./generate_test.sh`. Verify guard tracking with `make check` or `python3 test_elif_guards.py`.
 
 ## Dependencies
 

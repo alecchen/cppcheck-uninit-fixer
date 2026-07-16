@@ -167,6 +167,7 @@ Scans all source files for macro names (filtering out include guards and comment
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
+<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing — the Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script.</p>
 <h3 id="with-compile_commandsjson-best-results">With compile_commands.json (best results)</h3>
 <pre><code class="hljs bash language-bash">bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py --project=compile_commands.json
@@ -183,6 +184,10 @@ Scans all source files for macro names (filtering out include guards and comment
 
 <span class="hljs-comment"># Both together</span>
 ./cppcheck-fix-uninit.py uninit_test.cpp uninit_guarded_test.cpp
+
+<span class="hljs-comment"># Verify #elif/#else guard chain tracking</span>
+python3 test_elif_guards.py
+make check
 </code></pre>
 <h2 id="supported-member-types">Supported Member Types</h2>
 <p>All primitive types, pointers, references, and enums are detected <strong>regardless of qualifiers</strong> — <code>const</code>, <code>volatile</code>, <code>const volatile</code> — on the type, the pointer, or both. Fixed-width integer types from <code>&lt;cstdint&gt;</code> are detected too.</p>
@@ -415,8 +420,6 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <p>The script flags 3+ macro compound conditions for manual review. Run cppcheck manually with the specific combination:</p>
 <pre><code class="hljs bash language-bash">cppcheck -DA=1 -DB=1 -UC --<span class="hljs-built_in">enable</span>=warning --inconclusive file.cpp
 </code></pre>
-<h3 id="build-system-integration">Build-system integration</h3>
-<p>Without <code>-I</code> paths, headers fail to parse and <code>#if</code>-guarded members in headers are invisible. Always pass <code>-I</code> flags or use <code>compile_commands.json</code>.</p>
 <h3 id="cppcheck-limitations">cppcheck limitations</h3>
 <ul>
 <li>Does not track <code>memset()</code>, placement <code>new</code>, or helper functions in the constructor body</li>
@@ -464,9 +467,14 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <td>15</td>
 <td>6 feature flags, compound <code>&amp;&amp;</code>/<code>||</code>/<code>!</code> guards</td>
 </tr>
+<tr>
+<td><code>test_elif_guards.py</code></td>
+<td>—</td>
+<td>Unit test for <code>#elif</code>/<code>#else</code> guard chain tracking</td>
+</tr>
 </tbody>
 </table>
-<p>Regenerate with <code>./generate_test.sh</code>.</p>
+<p>Regenerate with <code>./generate_test.sh</code>. Verify guard tracking with <code>make check</code> or <code>python3 test_elif_guards.py</code>.</p>
 <h2 id="dependencies">Dependencies</h2>
 <ul>
 <li><code>cppcheck</code> (2.13+ recommended)</li>

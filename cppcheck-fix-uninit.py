@@ -119,16 +119,25 @@ def parse_findings(xml_root):
 # Find header files
 # ---------------------------------------------------------------------------
 
-def find_headers(sources):
-    """Collect .h/.hpp files co-located with source files."""
+def find_headers(sources, include_dirs=None):
+    """Collect .h/.hpp files co-located with source files or in -I dirs."""
     headers = set()
+    dirs = set()
     for src in sources:
         d = os.path.dirname(src)
-        if not d or not os.path.isdir(d):
+        if d:
+            dirs.add(d)
+    if include_dirs:
+        dirs.update(include_dirs)
+    for d in dirs:
+        if not os.path.isdir(d):
             continue
-        for fn in os.listdir(d):
-            if fn.endswith(('.h', '.hpp', '.hxx')):
-                headers.add(os.path.abspath(os.path.join(d, fn)))
+        try:
+            for fn in os.listdir(d):
+                if fn.endswith(('.h', '.hpp', '.hxx')):
+                    headers.add(os.path.abspath(os.path.join(d, fn)))
+        except PermissionError:
+            continue
     return sorted(headers)
 
 
@@ -155,7 +164,7 @@ def parse_member_types(headers):
 
         # Remove string literals and comments
         raw = text
-        text = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', text)
+        text = re.sub(r'"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"', '""', text)
         text = re.sub(r'//.*', '', text)
         text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
 
@@ -169,41 +178,41 @@ def parse_member_types(headers):
                 end += 1
             body = text[start:end - 1]
 
-            # Track preprocessor guard stack while scanning lines
-            # Each entry: ('if COND') or ('else') or ('elif COND')
-            guard_stack = []
+            # Track preprocessor guard chains while scanning lines.
+            # Each stack entry is a list of conditions in the current
+            # #if/#elif/#else chain at that nesting level.  For example:
+            #   #if A          -> push ["A"]
+            #   #elif B        -> append -> ["A", "B"]
+            #     int x;       -> active = "!A && B"
+            #   #else          -> append None -> ["A", "B", None]
+            #     int y;       -> active = "!A && !B"
+            #   #endif         -> pop
+            guard_chain = []  # list of lists: chain per nesting level
 
             for raw_line in body.split('\n'):
                 s = raw_line.strip()
 
                 # Track preprocessor directives
                 if s.startswith('#ifdef '):
-                    guard_stack.append(f"defined({s[7:].strip()})")
+                    guard_chain.append([f"defined({s[7:].strip()})"])
                     continue
                 if s.startswith('#ifndef '):
-                    guard_stack.append(f"!defined({s[7:].strip()})")
+                    guard_chain.append([f"!defined({s[7:].strip()})"])
                     continue
                 if s.startswith('#if '):
-                    guard_stack.append(s[4:].strip())
+                    guard_chain.append([s[4:].strip()])
                     continue
                 if s.startswith('#elif '):
-                    if guard_stack:
-                        guard_stack[-1] = s[6:].strip()
+                    if guard_chain:
+                        guard_chain[-1].append(s[6:].strip())
                     continue
                 if s == '#else':
-                    # Flip the last guard: if it was COND, now !COND
-                    if guard_stack:
-                        last = guard_stack[-1]
-                        if last.startswith('defined(') and last.endswith(')'):
-                            guard_stack[-1] = '!' + last
-                        elif last.startswith('!defined('):
-                            guard_stack[-1] = last[1:]  # remove the !
-                        else:
-                            guard_stack[-1] = f"!({last})"
+                    if guard_chain:
+                        guard_chain[-1].append(None)  # None marks else branch
                     continue
                 if s.startswith('#endif'):
-                    if guard_stack:
-                        guard_stack.pop()
+                    if guard_chain:
+                        guard_chain.pop()
                     continue
 
                 # Skip non-declaration lines
@@ -226,10 +235,30 @@ def parse_member_types(headers):
                 if t.startswith(('public:','private:','protected:')):
                     continue
 
-                # Build the guard expression from the stack
-                if guard_stack:
-                    guard = ' && '.join(f'({g})' if '||' in g else g
-                                        for g in guard_stack)
+                # Build the guard expression from the chain stack
+                if guard_chain:
+                    parts = []
+                    for chain in guard_chain:
+                        if len(chain) == 1 and chain[0] is not None:
+                            # Simple #if
+                            active = chain[0]
+                        elif chain[-1] is None:
+                            # #else branch: negate all conditions in the chain
+                            negated = ' && '.join(
+                                f'!({c})' if '||' in c else f'!{c}'
+                                for c in chain[:-1]
+                            )
+                            active = negated
+                        else:
+                            # #elif branch: negate all prior, keep last
+                            prior = chain[:-1]
+                            negated = ' && '.join(
+                                f'!({c})' if '||' in c else f'!{c}'
+                                for c in prior
+                            )
+                            active = f'{negated} && {chain[-1]}'
+                        parts.append(f'({active})' if '||' in active else active)
+                    guard = ' && '.join(parts)
                 else:
                     guard = None
 
@@ -260,7 +289,7 @@ def default_init(type_info):
         return '{}'
     t = type_str.strip().lower()
 
-    # Reference — no safe default
+    # Reference -- no safe default
     if '&' in type_str:
         return None
 
@@ -283,7 +312,7 @@ def default_init(type_info):
              'char8_t', 'char16_t', 'char32_t'):
         return "'\\0'"
 
-    # Everything else → 0 (works for int, long, short, fixed-width, enum, etc.)
+    # Everything else -> 0 (works for int, long, short, fixed-width, enum, etc.)
     return '0'
 
 
@@ -300,7 +329,7 @@ def fix_file(filepath, grouped, member_types):
         lines = f.readlines()
 
     # Group by constructor line
-    by_line = defaultdict(list)   # line → [(class_name, member_name)]
+    by_line = defaultdict(list)   # line -> [(class_name, member_name)]
     for cls, member, line in grouped:
         by_line[line].append((cls, member))
 
@@ -336,7 +365,7 @@ def fix_in_class(header_files, findings, member_types):
     Instead of modifying constructor initializer lists (which must be done
     per-constructor), adds `= default` to each member declaration in the header:
 
-        int a_;  →  int a_ = 0;
+        int a_;  ->  int a_ = 0;
 
     This works correctly with #if-guarded members since the initializer
     lives in the same #if block as the declaration. Returns count of
@@ -348,7 +377,7 @@ def fix_in_class(header_files, findings, member_types):
         need_fix.add((cls, member))
 
     # Group by header file
-    by_header = defaultdict(set)  # header → set of (class, member)
+    by_header = defaultdict(set)  # header -> set of (class, member)
     for hdr in header_files:
         abspath = os.path.abspath(hdr)
         for cls, member in need_fix:
@@ -451,7 +480,7 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
         # Get guard condition (None if unconditional, str like "USE_LEGACY")
         guard = info.get('guard') if isinstance(info, dict) else None
         if guard:
-            # Cannot auto-fix guarded members — init-list comma depends on
+            # Cannot auto-fix guarded members -- init-list comma depends on
             # which #if blocks are active, which we don't know at fix time.
             skipped_guarded = True
             continue
@@ -525,9 +554,9 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
         last_entry = brace_line_idx - 1
         while last_entry > start_0idx and not lines[last_entry].strip():
             last_entry -= 1
-        # Do NOT add trailing comma — new entries already have `, ` prefix
+        # Do NOT add trailing comma -- new entries already have `, ` prefix
         if not lines[brace_line_idx].strip().lstrip().startswith('{'):
-            # Brace shares a line with something else — split it out
+            # Brace shares a line with something else -- split it out
             # The brace is the last thing on the line
             before_brace = lines[brace_line_idx][:brace_col]
             lines[brace_line_idx] = before_brace.rstrip() + '\n'
@@ -538,7 +567,7 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
             brace_ws = ' ' * (len(lines[brace_line_idx]) - len(lines[brace_line_idx].lstrip()))
             lines[brace_line_idx] = ''
             if not lines[brace_line_idx].strip():
-                # line is now empty brace content — replace entirely
+                # line is now empty brace content -- replace entirely
                 pass
             # Insert at the brace position
             if last_entry >= start_0idx and lines[last_entry].strip():
@@ -552,7 +581,7 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
                 lines.insert(brace_line_idx + len(lines_to_add),
                              f"{brace_ws}{{\n")
         else:
-            # Brace on its own line — insert new entries just before it
+            # Brace on its own line -- insert new entries just before it
             for k, il in enumerate(lines_to_add):
                 lines.insert(brace_line_idx + k, il)
     else:
@@ -561,7 +590,7 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
         brace_ws = ' ' * (len(lines[brace_line_idx]) - len(lines[brace_line_idx].lstrip()))
         brace_on_own_line = lines[brace_line_idx].strip() == '{'
         if not brace_on_own_line:
-            # Brace shares line with signature/member — move it
+            # Brace shares line with signature/member -- move it
             before_brace = lines[brace_line_idx][:brace_col]
             lines[brace_line_idx] = before_brace.rstrip() + '\n'
             for k, il in enumerate(lines_to_add):
@@ -612,18 +641,20 @@ def main():
     for d in args.defines:
         extra.extend(['-D', d])
 
+    also_read = sources + find_headers(sources, args.includes)
+
     # ---- Phase 1: Extract macros for Pass 2 ----
     print("Phase 1: scanning for macros...", file=sys.stderr)
-    macros = extract_macros(sources + find_headers(sources))
+    macros = extract_macros(also_read)
     print(f"  found {len(macros)} user macro(s)", file=sys.stderr)
     if VERBOSE and macros:
         for m in macros:
             print(f"    {m}", file=sys.stderr)
     if not macros and VERBOSE:
-        print("    (none found — skipping pass 2)", file=sys.stderr)
+        print("    (none found -- skipping pass 2)", file=sys.stderr)
 
     # ---- Phase 2: Run cppcheck (Pass 1 + Pass 2) ----
-    print("Phase 2: running cppcheck (pass 1 — base config)...", file=sys.stderr)
+    print("Phase 2: running cppcheck (pass 1 -- base config)...", file=sys.stderr)
     if VERBOSE:
         cmd = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
                "--max-configs=9999", "--check-level=exhaustive",
@@ -633,7 +664,7 @@ def main():
 
     if macros:
         all_defs = [f'-D{m}=1' for m in macros]
-        print("Phase 2: running cppcheck (pass 2 — all macros defined)...", file=sys.stderr)
+        print("Phase 2: running cppcheck (pass 2 -- all macros defined)...", file=sys.stderr)
         if VERBOSE:
             cmd2 = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
                     "--max-configs=9999", "--check-level=exhaustive",
@@ -660,7 +691,7 @@ def main():
         for f in findings:
             by_line[(f[0], f[1])].append((f[2], f[3]))
         for (fp, ln), members in sorted(by_line.items()):
-            print(f"    {os.path.basename(fp)}:{ln} — {len(members)} member(s)", file=sys.stderr)
+            print(f"    {os.path.basename(fp)}:{ln} -- {len(members)} member(s)", file=sys.stderr)
             for cls, mname in sorted(members):
                 print(f"      {cls}::{mname}", file=sys.stderr)
 
@@ -671,7 +702,7 @@ def main():
 
     # ---- Phase 4: Parse member types ----
     print("Phase 4: parsing member types from headers...", file=sys.stderr)
-    headers = find_headers(sources)
+    headers = find_headers(sources, args.includes)
     member_types = parse_member_types(headers)
     total_types = sum(len(v) for v in member_types.values())
     print(f"  parsed {total_types} member(s) from headers", file=sys.stderr)
@@ -686,9 +717,9 @@ def main():
                     type_str = str(minfo)
                     guard = None
                 default = default_init(minfo)
-                dv = default or "(reference — skipped)"
+                dv = default or "(reference -- skipped)"
                 g = f" [{guard}]" if guard else ""
-                print(f"      {type_str} {mname} → {dv}{g}", file=sys.stderr)
+                print(f"      {type_str} {mname} -> {dv}{g}", file=sys.stderr)
 
     # ---- Phase 5: Apply fixes ----
     print("Phase 5: applying fixes...", file=sys.stderr)
@@ -713,7 +744,7 @@ def main():
         print(f"\nDone. Fixed {total} constructor(s). Backups (*.bak) created.", file=sys.stderr)
         return
 
-    # Default: in-class mode — add default initializers to header declarations
+    # Default: in-class mode -- add default initializers to header declarations
     n = fix_in_class(headers, findings, member_types)
     if n:
         print(f"  added in-class initializers for {n} member(s)", file=sys.stderr)
