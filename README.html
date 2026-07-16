@@ -1,229 +1,380 @@
-<!DOCTYPE html><html lang="en"><head>
-<meta charset="utf-8"><title>cppcheck Uninitialized Member Detector</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-max-width:860px;margin:0 auto;padding:2em 1em;line-height:1.6;color:#333;}
-pre{background:#f6f8fa;padding:1em;overflow:auto;border-radius:6px;font-size:90%;}
-code{background:#f0f0f0;padding:.15em .3em;border-radius:3px;font-size:90%;}
-pre code{background:none;padding:0;}
-table{border-collapse:collapse;width:100%;margin:1em 0;}
-th,td{border:1px solid #d0d7de;padding:.4em .6em;text-align:left;}
-th{background:#f6f8fa;}a{color:#0969da;}
-h1{border-bottom:1px solid #d0d7de;padding-bottom:.3em;}</style></head><body>
-<h1>cppcheck Uninitialized Member Detector</h1>
-<p><p>Find and auto-fix uninitialized member variables in C++ classes — handles <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> preprocessor guards automatically.</p>
-<p><h2>Quick Start</h2>
-<p><pre><code># 1. Find uninitialized members
+
+      <html>
+        <head>
+          <title>cppcheck-uninit-fixer</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta charset="UTF-8">
+        </head>
+        <body>
+          <div id='content'>
+      <h1 id="cppcheck-uninitialized-member-detector">cppcheck Uninitialized Member Detector</h1>
+<p>Find and auto-fix uninitialized member variables in C++ classes — handles <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> preprocessor guards automatically.</p>
+<h2 id="quick-start">Quick Start</h2>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># 1. Find uninitialized members</span>
 ./check_uninit_all.sh *.cpp
 
-# 2. Auto-fix (in-class defaults = header int a_; → int a_ = 0;)
+<span class="hljs-comment"># 2. Auto-fix (in-class defaults = header int a_; → int a_ = 0;)</span>
 ./cppcheck-fix-uninit.py *.cpp
 
-# 3. Verify clean
+<span class="hljs-comment"># 3. Verify clean</span>
 ./cppcheck-fix-uninit.py --report-only *.cpp
 
-# Or all at once: find + fix + verify
+<span class="hljs-comment"># Or all at once: find + fix + verify</span>
 ./cppcheck-fix-uninit.py *.cpp &amp;&amp; ./cppcheck-fix-uninit.py --report-only *.cpp
 
-# For #if-heavy code, in-class mode handles guards automatically (default).
-# For constructor init-lists instead: add --init-list
+<span class="hljs-comment"># For #if-heavy code, in-class mode handles guards automatically (default).</span>
+<span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
 </code></pre>
-<p><p><h2>The Problem</h2>
-<p><p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has two critical blind spots when the code uses preprocessor conditionals:</p>
-<p><li>**Single-flag permutations only.** cppcheck's auto-config detection checks each undefined `#if` symbol independently. It **never** tries combinations — so `#if A && B` is never checked in the config where both are active.</li>
-<p><li>**Default config limit.** cppcheck checks at most 12 configs by default. Codebases with many feature flags may have relevant configs skipped entirely.</li>
-<p><p>Both scripts work around these limitations with a two-pass strategy.</p>
-<p><h2>How It Works</h2>
-<p><h3>Two-pass cppcheck strategy</h3>
-<p><p><strong>Pass 1: Base config + <code>--max-configs=9999</code></strong></p>
-<p>Runs cppcheck with no extra defines, but with the config limit raised to 9999.</p>
-<p><table>
-<tr><th>Pattern</th><th>Covered?</th><th>Why</th></tr>
-<tr><td>`#if A`</td><td>Yes</td><td>Single-permutation config checks A-on</td></tr>
-<tr><td>`#ifdef A`</td><td>Yes</td><td>Same</td></tr>
-<tr><td>`#ifndef A`</td><td>Yes</td><td>Base config has A off</td></tr>
-<tr><td>`#if A && !B`</td><td>Yes</td><td>A-on config has B off → condition true</td></tr>
-<tr><td>`#if A \</td><td>\</td><td>B`</td><td>Yes</td><td>A-on config makes it true</td></tr>
-<tr><td>`#if A && B`</td><td>**No**</td><td>No single config has both A and B on</td></tr>
+<h2 id="the-problem">The Problem</h2>
+<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has two critical blind spots when the code uses preprocessor conditionals:</p>
+<ol>
+<li><p><strong>Single-flag permutations only.</strong> cppcheck's auto-config detection checks each undefined <code>#if</code> symbol independently. It <strong>never</strong> tries combinations — so <code>#if A &amp;&amp; B</code> is never checked in the config where both are active.</p></li>
+<li><p><strong>Default config limit.</strong> cppcheck checks at most 12 configs by default. Codebases with many feature flags may have relevant configs skipped entirely.</p></li>
+</ol>
+<p>Both scripts work around these limitations with a two-pass strategy.</p>
+<h2 id="how-it-works">How It Works</h2>
+<h3 id="two-pass-cppcheck-strategy">Two-pass cppcheck strategy</h3>
+<p><strong>Pass 1: Base config + <code>--max-configs=9999</code></strong><br />
+Runs cppcheck with no extra defines, but with the config limit raised to 9999.</p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Covered?</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>#if A</code></td>
+<td>Yes</td>
+<td>Single-permutation config checks A-on</td>
+</tr>
+<tr>
+<td><code>#ifdef A</code></td>
+<td>Yes</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><code>#ifndef A</code></td>
+<td>Yes</td>
+<td>Base config has A off</td>
+</tr>
+<tr>
+<td><code>#if A &amp;&amp; !B</code></td>
+<td>Yes</td>
+<td>A-on config has B off → condition true</td>
+</tr>
+<tr>
+<td><code>#if A || B</code></td>
+<td>Yes</td>
+<td>A-on config makes it true</td>
+</tr>
+<tr>
+<td><code>#if A &amp;&amp; B</code></td>
+<td><strong>No</strong></td>
+<td>No single config has both A and B on</td>
+</tr>
+</tbody>
 </table>
-<p><strong>Pass 2: All extracted macros defined.</strong></p>
-<p>Scans all source files for macro names (filtering out include guards and comment noise), then runs cppcheck with every macro explicitly defined (<code>-DMACRO=1</code>).</p>
-<p><table>
-<tr><th>Pattern</th><th>Covered?</th><th>Why</th></tr>
-<tr><td>`#if A && B`</td><td>Yes</td><td>Both defined → condition true</td></tr>
-<tr><td>`#if defined(A) && defined(B)`</td><td>Yes</td><td>Same</td></tr>
-<tr><td>`#if A && B && C`</td><td>Yes</td><td>All three defined</td></tr>
-<tr><td>`#if A && B && !C`</td><td>**No**</td><td>C is defined → `!C` is false</td></tr>
+<p><strong>Pass 2: All extracted macros defined.</strong><br />
+Scans all source files for macro names (filtering out include guards and comment noise), then runs cppcheck with every macro explicitly defined (<code>-DMACRO=1</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Covered?</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>#if A &amp;&amp; B</code></td>
+<td>Yes</td>
+<td>Both defined → condition true</td>
+</tr>
+<tr>
+<td><code>#if defined(A) &amp;&amp; defined(B)</code></td>
+<td>Yes</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><code>#if A &amp;&amp; B &amp;&amp; C</code></td>
+<td>Yes</td>
+<td>All three defined</td>
+</tr>
+<tr>
+<td><code>#if A &amp;&amp; B &amp;&amp; !C</code></td>
+<td><strong>No</strong></td>
+<td>C is defined → <code>!C</code> is false</td>
+</tr>
+</tbody>
 </table>
-<h3>Compound condition detection</h3>
-<p><p>The bash script flags <code>#if</code> conditions with 3+ user macros for manual review:</p>
-<p><pre><code>=== Compound conditions detected ===
+<h3 id="compound-condition-detection">Compound condition detection</h3>
+<p>The bash script flags <code>#if</code> conditions with 3+ user macros for manual review:</p>
+<pre><code class="hljs text language-text">=== Compound conditions detected ===
   [3+ macros] config.h: #if FEATURE_A &amp;&amp; FEATURE_B &amp;&amp; !FEATURE_C
     Manual check needed: run with selective -D/-U flags for this condition
 </code></pre>
-<p><h3>Fix mode: in-class defaults (default) vs init-list (opt-in)</h3>
-<p><p>The Python fixer has two modes:</p>
-<p><p><strong>Default: in-class initializers</strong> — adds <code>= 0</code> / <code>= nullptr</code> / <code>= false</code> directly to the member declaration in the header:</p>
-<p><pre><code>// Before                     // After
-int a_;                       int a_ = 0;
-const char* label_;           const char* label_ = nullptr;
-uint32_t u32_;                uint32_t u32_ = 0;
+<h3 id="fix-mode-in-class-defaults-default-vs-init-list-opt-in">Fix mode: in-class defaults (default) vs init-list (opt-in)</h3>
+<p>The Python fixer has two modes:</p>
+<p><strong>Default: in-class initializers</strong> — adds <code>= 0</code> / <code>= nullptr</code> / <code>= false</code> directly to the member declaration in the header:</p>
+<pre><code class="hljs cpp language-cpp"><span class="hljs-comment">// Before                     // After</span>
+<span class="hljs-type">int</span> a_;                       <span class="hljs-type">int</span> a_ = <span class="hljs-number">0</span>;
+<span class="hljs-type">const</span> <span class="hljs-type">char</span>* label_;           <span class="hljs-type">const</span> <span class="hljs-type">char</span>* label_ = <span class="hljs-literal">nullptr</span>;
+<span class="hljs-type">uint32_t</span> u32_;                <span class="hljs-type">uint32_t</span> u32_ = <span class="hljs-number">0</span>;
 </code></pre>
-<p><p>One change covers all constructors. Works correctly with <code>#if</code>-guarded members because the initializer lives in the same preprocessor block:</p>
-<p><pre><code>#if BUILD_PERFORMANCE
-    int cache_size_ = 0;   // only compiled when BUILD_PERFORMANCE is defined
-#endif
+<p>One change covers all constructors. Works correctly with <code>#if</code>-guarded members because the initializer lives in the same preprocessor block:</p>
+<pre><code class="hljs cpp language-cpp"><span class="hljs-meta">#<span class="hljs-keyword">if</span> BUILD_PERFORMANCE</span>
+    <span class="hljs-type">int</span> cache_size_ = <span class="hljs-number">0</span>;   <span class="hljs-comment">// only compiled when BUILD_PERFORMANCE is defined</span>
+<span class="hljs-meta">#<span class="hljs-keyword">endif</span></span>
 </code></pre>
-<p><p><strong>Opt-in: constructor init-list</strong> — adds <code>: member_(0)</code> to each constructor in the <code>.cpp</code>:</p>
-<p><pre><code>./cppcheck-fix-uninit.py --init-list *.cpp
+<p><strong>Opt-in: constructor init-list</strong> — adds <code>: member_(0)</code> to each constructor in the <code>.cpp</code>:</p>
+<pre><code class="hljs bash language-bash">./cppcheck-fix-uninit.py --init-list *.cpp
 </code></pre>
-<p><p>Produces:</p>
-<p><pre><code>Foo::Foo()
-    : a_(0)
-    , label_(nullptr)
+<p>Produces:</p>
+<pre><code class="hljs cpp language-cpp">Foo::<span class="hljs-built_in">Foo</span>()
+    : <span class="hljs-built_in">a_</span>(<span class="hljs-number">0</span>)
+    , <span class="hljs-built_in">label_</span>(<span class="hljs-literal">nullptr</span>)
 {}
 </code></pre>
-<p><p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. Note that <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode — the C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
-<p><h2>Usage</h2>
-<p><h3>Find only (bash script)</h3>
-<p><pre><code># Scan .cpp files
+<p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. Note that <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode — the C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
+<h2 id="usage">Usage</h2>
+<h3 id="find-only-bash-script">Find only (bash script)</h3>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files</span>
 ./check_uninit_all.sh *.cpp
 
-# With include paths
+<span class="hljs-comment"># With include paths</span>
 ./check_uninit_all.sh -I /path/to/api *.cpp
 
-# With additional flags passed through
+<span class="hljs-comment"># With additional flags passed through</span>
 ./check_uninit_all.sh -I /path -j 8 --suppress=unusedFunction *.cpp
 </code></pre>
-<p><h3>Find + auto-fix (Python script)</h3>
-<p><pre><code># Default: add in-class =0 initializers to headers (handles #if guards)
+<h3 id="find--auto-fix-python-script">Find + auto-fix (Python script)</h3>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># Default: add in-class =0 initializers to headers (handles #if guards)</span>
 ./cppcheck-fix-uninit.py *.cpp
 ./cppcheck-fix-uninit.py -I /path/to/api *.cpp
 
-# Verbose: show macros, cppcheck commands, member types with guards
+<span class="hljs-comment"># Verbose: show macros, cppcheck commands, member types with guards</span>
 ./cppcheck-fix-uninit.py -v *.cpp
 
-# Opt-in: constructor initializer lists instead (skips guarded members)
+<span class="hljs-comment"># Opt-in: constructor initializer lists instead (skips guarded members)</span>
 ./cppcheck-fix-uninit.py --init-list *.cpp
 
-# Preview only, do not modify
+<span class="hljs-comment"># Preview only, do not modify</span>
 ./cppcheck-fix-uninit.py --report-only *.cpp
 ./cppcheck-fix-uninit.py -v --report-only *.cpp
 </code></pre>
-<p><p>Creates <code>.bak</code> backup files before any modification.</p>
-<p><p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><p><h3>With compile_commands.json (best results)</h3>
-<p><pre><code>bear -- ./build_script.sh
+<p>Creates <code>.bak</code> backup files before any modification.</p>
+<p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
+<h3 id="with-compile_commandsjson-best-results">With compile_commands.json (best results)</h3>
+<pre><code class="hljs bash language-bash">bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py --project=compile_commands.json
 </code></pre>
-<p><h3>Test harness</h3>
-<p><pre><code># Regenerate both test suites (resets all uninitialized members)
+<h3 id="test-harness">Test harness</h3>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># Regenerate both test suites (resets all uninitialized members)</span>
 ./generate_test.sh
 
-# Test 1: basic (57 uninit members, no #if, 29 member types)
+<span class="hljs-comment"># Test 1: basic (57 uninit members, no #if, 29 member types)</span>
 ./cppcheck-fix-uninit.py uninit_test.cpp
 
-# Guarded (15 uninit members, 6 #if flags, compound conditions)
+<span class="hljs-comment"># Guarded (15 uninit members, 6 #if flags, compound conditions)</span>
 ./cppcheck-fix-uninit.py -v uninit_guarded_test.cpp
 
-# Both together
+<span class="hljs-comment"># Both together</span>
 ./cppcheck-fix-uninit.py uninit_test.cpp uninit_guarded_test.cpp
 </code></pre>
-<p><h2>Supported Member Types</h2>
-<p><p>All primitive types, pointers, references, and enums are detected <strong>regardless of qualifiers</strong> — <code>const</code>, <code>volatile</code>, <code>const volatile</code> — on the type, the pointer, or both. Fixed-width integer types from <code><cstdint></code> are detected too.</p>
-<p><h3>Detected</h3>
-<p><table>
-<tr><th>Category</th><th>Types</th><th>Default init value</th></tr>
-<tr><td>**Plain integers**</td><td>`char`, `signed/unsigned char`, `short`, `unsigned short`</td><td>`0` / `'\0'`</td></tr>
-<tr><td></td><td>`int`, `unsigned`, `long`, `unsigned long`</td><td>`0` / `0L`</td></tr>
-<tr><td></td><td>`long long`, `unsigned long long`</td><td>`0LL`</td></tr>
-<tr><td>**Fixed-width**</td><td>`int8_t..uint64_t`, `size_t`, `ptrdiff_t`</td><td>`0`</td></tr>
-<tr><td>**Floating-point**</td><td>`float` / `double` / `long double`</td><td>`0.0f` / `0.0`</td></tr>
-<tr><td>**Enum**</td><td>`enum` (scoped and unscoped)</td><td>`{}`</td></tr>
-<tr><td>**Bool**</td><td>`bool`</td><td>`false`</td></tr>
-<tr><td>**Qualified**</td><td>`const T`, `volatile T`, `const volatile T`</td><td>(same as T)</td></tr>
-<tr><td>**Pointers**</td><td>`T*`, `const T*`, `T* const`, `const T* const`</td><td>`nullptr`</td></tr>
-<tr><td></td><td>`volatile T*`, `T* volatile`, `const volatile T*`</td><td>`nullptr`</td></tr>
-<tr><td>**References**</td><td>`T&`, `const T&`</td><td>must bind (skipped)</td></tr>
-<tr><td>**Ptr-to-member**</td><td>`int T::*`</td><td>`nullptr`</td></tr>
+<h2 id="supported-member-types">Supported Member Types</h2>
+<p>All primitive types, pointers, references, and enums are detected <strong>regardless of qualifiers</strong> — <code>const</code>, <code>volatile</code>, <code>const volatile</code> — on the type, the pointer, or both. Fixed-width integer types from <code>&lt;cstdint&gt;</code> are detected too.</p>
+<h3 id="detected">Detected</h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Types</th>
+<th>Default init value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Plain integers</strong></td>
+<td><code>char</code>, <code>signed/unsigned char</code>, <code>short</code>, <code>unsigned short</code></td>
+<td><code>0</code> / <code>'\0'</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>int</code>, <code>unsigned</code>, <code>long</code>, <code>unsigned long</code></td>
+<td><code>0</code> / <code>0L</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>long long</code>, <code>unsigned long long</code></td>
+<td><code>0LL</code></td>
+</tr>
+<tr>
+<td><strong>Fixed-width</strong></td>
+<td><code>int8_t..uint64_t</code>, <code>size_t</code>, <code>ptrdiff_t</code></td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td><strong>Floating-point</strong></td>
+<td><code>float</code> / <code>double</code> / <code>long double</code></td>
+<td><code>0.0f</code> / <code>0.0</code></td>
+</tr>
+<tr>
+<td><strong>Enum</strong></td>
+<td><code>enum</code> (scoped and unscoped)</td>
+<td><code>{}</code></td>
+</tr>
+<tr>
+<td><strong>Bool</strong></td>
+<td><code>bool</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><strong>Qualified</strong></td>
+<td><code>const T</code>, <code>volatile T</code>, <code>const volatile T</code></td>
+<td>(same as T)</td>
+</tr>
+<tr>
+<td><strong>Pointers</strong></td>
+<td><code>T*</code>, <code>const T*</code>, <code>T* const</code>, <code>const T* const</code></td>
+<td><code>nullptr</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>volatile T*</code>, <code>T* volatile</code>, <code>const volatile T*</code></td>
+<td><code>nullptr</code></td>
+</tr>
+<tr>
+<td><strong>References</strong></td>
+<td><code>T&amp;</code>, <code>const T&amp;</code></td>
+<td>must bind (skipped)</td>
+</tr>
+<tr>
+<td><strong>Ptr-to-member</strong></td>
+<td><code>int T::*</code></td>
+<td><code>nullptr</code></td>
+</tr>
+</tbody>
 </table>
-<p><strong>Note on <code>const</code> and reference members:</strong> <code>const T</code> and <code>T&</code>/<code>const T&</code> members are compiler-mandated in the initializer list. In-class initialization works for <code>const T</code> in C++11 (<code>const int a_ = 0</code>) but not for references (they need a binding target). cppcheck flags them when missing; references are skipped by the auto-fixer.</p>
-<p><h3>NOT detected</h3>
-<p><p>Types with their own default constructor — cppcheck considers them "initialized" even if forgotten:</p>
-<p><table>
-<tr><th>Type</th><th>Safe default</th></tr>
-<tr><td>`std::string`, `std::vector<T>`</td><td>`{}` (empty)</td></tr>
-<tr><td>`std::unique_ptr<T>`, `std::shared_ptr<T>`</td><td>`{}` (nullptr)</td></tr>
-<tr><td>`std::optional<T>`, `std::variant<T...>`</td><td>`{}` (nullopt / first alt)</td></tr>
-<tr><td>Any class/struct with a default ctor</td><td>cppcheck trusts it</td></tr>
+<p><strong>Note on <code>const</code> and reference members:</strong> <code>const T</code> and <code>T&amp;</code>/<code>const T&amp;</code> members are compiler-mandated in the initializer list. In-class initialization works for <code>const T</code> in C++11 (<code>const int a_ = 0</code>) but not for references (they need a binding target). cppcheck flags them when missing; references are skipped by the auto-fixer.</p>
+<h3 id="not-detected">NOT detected</h3>
+<p>Types with their own default constructor — cppcheck considers them "initialized" even if forgotten:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Safe default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>std::string</code>, <code>std::vector&lt;T&gt;</code></td>
+<td><code>{}</code> (empty)</td>
+</tr>
+<tr>
+<td><code>std::unique_ptr&lt;T&gt;</code>, <code>std::shared_ptr&lt;T&gt;</code></td>
+<td><code>{}</code> (nullptr)</td>
+</tr>
+<tr>
+<td><code>std::optional&lt;T&gt;</code>, <code>std::variant&lt;T...&gt;</code></td>
+<td><code>{}</code> (nullopt / first alt)</td>
+</tr>
+<tr>
+<td>Any class/struct with a default ctor</td>
+<td>cppcheck trusts it</td>
+</tr>
+</tbody>
 </table>
 <p>A forgotten <code>std::string name_</code> in the initializer list will <strong>not</strong> be flagged — the default constructor produces a valid empty state.</p>
-<p><h3>Primitive arrays and structs</h3>
-<p><table>
-<tr><th>Type</th><th>Flags?</th><th>Notes</th></tr>
-<tr><td>`int arr[10]`</td><td>No</td><td>Elements not checked individually</td></tr>
-<tr><td>`struct Point { int x,y; };`</td><td>Depends</td><td>Only if `Point` has no default ctor</td></tr>
-<tr><td>`union { int a; float b; };`</td><td>No</td><td>Not tracked</td></tr>
+<h3 id="primitive-arrays-and-structs">Primitive arrays and structs</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Flags?</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int arr[10]</code></td>
+<td>No</td>
+<td>Elements not checked individually</td>
+</tr>
+<tr>
+<td><code>struct Point { int x,y; };</code></td>
+<td>Depends</td>
+<td>Only if <code>Point</code> has no default ctor</td>
+</tr>
+<tr>
+<td><code>union { int a; float b; };</code></td>
+<td>No</td>
+<td>Not tracked</td>
+</tr>
+</tbody>
 </table>
-<h3>How to fix (in-class, default)</h3>
-<p><p>The fixer adds in-class default initializers to the header:</p>
-<p><pre><code>class Foo {
-    int a_ = 0;
-    double b_ = 0.0;
-    float c_ = 0.0f;
-    bool d_ = false;
-    char e_ = '\0';
-    short f_ = 0;
-    long g_ = 0;
-    unsigned h_ = 0;
-    const char* i_ = nullptr;
-    int* j_ = nullptr;
-    int k_ = 0;
-    // const / reference
-    const int l_ = 0;
-    // const double&amp; m_ = ???  — skipped (reference)
-    const int* n_ = nullptr;
-    const char* const o_ = nullptr;
-    int* const p_ = nullptr;
-    // fixed-width
-    uint32_t q_ = 0;
-    uint64_t r_ = 0;
-    int32_t s_ = 0;
-    int64_t t_ = 0;
-    size_t sz_ = 0;
-    // volatile
-    volatile int vol_ = 0;
-    const volatile int cv_ = 0;
-    const uint32_t const_u32_ = 0;
-    // volatile pointer variants
-    volatile int* vol_ptr_ = nullptr;
-    int* volatile ptr_vol_ = nullptr;
-    const volatile int* cv_ptr_ = nullptr;
-    int* const volatile ptr_cv_ = nullptr;
-    // RAII — not flagged
+<h3 id="how-to-fix-in-class-default">How to fix (in-class, default)</h3>
+<p>The fixer adds in-class default initializers to the header:</p>
+<pre><code class="hljs cpp language-cpp"><span class="hljs-keyword">class</span> <span class="hljs-title class_">Foo</span> {
+    <span class="hljs-type">int</span> a_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">double</span> b_ = <span class="hljs-number">0.0</span>;
+    <span class="hljs-type">float</span> c_ = <span class="hljs-number">0.0f</span>;
+    <span class="hljs-type">bool</span> d_ = <span class="hljs-literal">false</span>;
+    <span class="hljs-type">char</span> e_ = <span class="hljs-string">&#x27;\0&#x27;</span>;
+    <span class="hljs-type">short</span> f_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">long</span> g_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">unsigned</span> h_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">const</span> <span class="hljs-type">char</span>* i_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">int</span>* j_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">int</span> k_ = <span class="hljs-number">0</span>;
+    <span class="hljs-comment">// const / reference</span>
+    <span class="hljs-type">const</span> <span class="hljs-type">int</span> l_ = <span class="hljs-number">0</span>;
+    <span class="hljs-comment">// const double&amp; m_ = ???  — skipped (reference)</span>
+    <span class="hljs-type">const</span> <span class="hljs-type">int</span>* n_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">const</span> <span class="hljs-type">char</span>* <span class="hljs-type">const</span> o_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">int</span>* <span class="hljs-type">const</span> p_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-comment">// fixed-width</span>
+    <span class="hljs-type">uint32_t</span> q_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">uint64_t</span> r_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">int32_t</span> s_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">int64_t</span> t_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">size_t</span> sz_ = <span class="hljs-number">0</span>;
+    <span class="hljs-comment">// volatile</span>
+    <span class="hljs-keyword">volatile</span> <span class="hljs-type">int</span> vol_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">const</span> <span class="hljs-keyword">volatile</span> <span class="hljs-type">int</span> cv_ = <span class="hljs-number">0</span>;
+    <span class="hljs-type">const</span> <span class="hljs-type">uint32_t</span> const_u32_ = <span class="hljs-number">0</span>;
+    <span class="hljs-comment">// volatile pointer variants</span>
+    <span class="hljs-keyword">volatile</span> <span class="hljs-type">int</span>* vol_ptr_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">int</span>* <span class="hljs-keyword">volatile</span> ptr_vol_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">const</span> <span class="hljs-keyword">volatile</span> <span class="hljs-type">int</span>* cv_ptr_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-type">int</span>* <span class="hljs-type">const</span> <span class="hljs-keyword">volatile</span> ptr_cv_ = <span class="hljs-literal">nullptr</span>;
+    <span class="hljs-comment">// RAII — not flagged</span>
     std::string name_;
 };
 </code></pre>
-<p><h3>How to fix (init-list, opt-in with `--init-list`)</h3>
-<p><pre><code>Foo::Foo()
-    : a_(0), b_(0.0), c_(0.0f), d_(false), e_('\0')
-    , f_(0), g_(0L), h_(0U), i_(nullptr), j_(nullptr)
-    , k_(0), l_(0)
-    , n_(nullptr), o_(nullptr), p_(nullptr)
-    , q_(0), r_(0), s_(0), t_(0), sz_(0)
-    , vol_(0), cv_(0), const_u32_(0)
-    , vol_ptr_(nullptr), ptr_vol_(nullptr)
-    , cv_ptr_(nullptr), ptr_cv_(nullptr)
+<h3 id="how-to-fix-init-list-opt-in-with---init-list">How to fix (init-list, opt-in with <code>--init-list</code>)</h3>
+<pre><code class="hljs cpp language-cpp">Foo::<span class="hljs-built_in">Foo</span>()
+    : <span class="hljs-built_in">a_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">b_</span>(<span class="hljs-number">0.0</span>), <span class="hljs-built_in">c_</span>(<span class="hljs-number">0.0f</span>), <span class="hljs-built_in">d_</span>(<span class="hljs-literal">false</span>), <span class="hljs-built_in">e_</span>(<span class="hljs-string">&#x27;\0&#x27;</span>)
+    , <span class="hljs-built_in">f_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">g_</span>(<span class="hljs-number">0L</span>), <span class="hljs-built_in">h_</span>(<span class="hljs-number">0U</span>), <span class="hljs-built_in">i_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">j_</span>(<span class="hljs-literal">nullptr</span>)
+    , <span class="hljs-built_in">k_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">l_</span>(<span class="hljs-number">0</span>)
+    , <span class="hljs-built_in">n_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">o_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">p_</span>(<span class="hljs-literal">nullptr</span>)
+    , <span class="hljs-built_in">q_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">r_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">s_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">t_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">sz_</span>(<span class="hljs-number">0</span>)
+    , <span class="hljs-built_in">vol_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">cv_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">const_u32_</span>(<span class="hljs-number">0</span>)
+    , <span class="hljs-built_in">vol_ptr_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">ptr_vol_</span>(<span class="hljs-literal">nullptr</span>)
+    , <span class="hljs-built_in">cv_ptr_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">ptr_cv_</span>(<span class="hljs-literal">nullptr</span>)
 {}
 </code></pre>
-<p><h2>Output</h2>
-<p><h3>Bash script (`check_uninit_all.sh`)</h3>
-<p><p>Writes report to <code>uninit_report.txt</code>:</p>
-<p><pre><code>uninit_test.cpp:6:13: warning: Member variable 'DataHolder::id_' is not initialized in the constructor. [uninitMemberVar]
-uninit_test.cpp:11:13: warning: Member variable 'DataHolder::flag_' is not initialized in the constructor. [uninitMemberVar]
+<h2 id="output">Output</h2>
+<h3 id="bash-script-check_uninit_allsh">Bash script (<code>check_uninit_all.sh</code>)</h3>
+<p>Writes report to <code>uninit_report.txt</code>:</p>
+<pre><code class="hljs text language-text">uninit_test.cpp:6:13: warning: Member variable &#x27;DataHolder::id_&#x27; is not initialized in the constructor. [uninitMemberVar]
+uninit_test.cpp:11:13: warning: Member variable &#x27;DataHolder::flag_&#x27; is not initialized in the constructor. [uninitMemberVar]
 </code></pre>
-<p><p>Lines with <code>inconclusive</code> appear when the constructor body is fully empty. <code>--inconclusive</code> must be enabled.</p>
-<p><h3>Python script — default (in-class) mode</h3>
-<p><pre><code>Phase 1: scanning for macros...
+<p>Lines with <code>inconclusive</code> appear when the constructor body is fully empty. <code>--inconclusive</code> must be enabled.</p>
+<h3 id="python-script-—-default-in-class-mode">Python script — default (in-class) mode</h3>
+<pre><code class="hljs text language-text">Phase 1: scanning for macros...
   found 6 user macro(s)
 Phase 2: running cppcheck (pass 1 — base config)...
 Phase 2: running cppcheck (pass 2 — all macros defined)...
@@ -237,8 +388,8 @@ Phase 5: applying fixes...
 
 Done. All uninit members have in-class defaults. Backups (*.bak) created.
 </code></pre>
-<p><p>Verbose (<code>-v</code>) adds: found macro names, cppcheck command lines, member types with guards and defaults:</p>
-<p><pre><code>    class ServiceConfig:
+<p>Verbose (<code>-v</code>) adds: found macro names, cppcheck command lines, member types with guards and defaults:</p>
+<pre><code class="hljs text language-text">    class ServiceConfig:
       int cache_size_ → 0 [BUILD_PERFORMANCE]
       const char* host_ → nullptr
       int legacy_port_ → 0 [USE_LEGACY]
@@ -246,57 +397,394 @@ Done. All uninit members have in-class defaults. Backups (*.bak) created.
       int retries_ → 0
       float x_y_ratio_ → 0.0f [FEATURE_X &amp;&amp; FEATURE_Y]
 </code></pre>
-<p><h3>Python script — init-list mode (`--init-list`)</h3>
-<p><pre><code>Phase 5: applying fixes...
-  note: ServiceConfig has guarded members that won't be auto-fixed
+<h3 id="python-script-—-init-list-mode---init-list">Python script — init-list mode (<code>--init-list</code>)</h3>
+<pre><code class="hljs text language-text">Phase 5: applying fixes...
+  note: ServiceConfig has guarded members that won&#x27;t be auto-fixed
   fixed 4 constructor(s) in uninit_guarded_test.cpp
   fixed 3 constructor(s) in uninit_test.cpp
 
 Done. Fixed 7 constructor(s). Backups (*.bak) created.
 </code></pre>
-<p><p>Guarded members (<code>[BUILD_PERFORMANCE]</code>, etc.) appear in findings but are skipped during auto-fix.</p>
-<p><h2>Limitations</h2>
-<p><h3>False negatives cppcheck cannot avoid</h3>
-<p><pre><code>#if A &amp;&amp; B &amp;&amp; !C
+<p>Guarded members (<code>[BUILD_PERFORMANCE]</code>, etc.) appear in findings but are skipped during auto-fix.</p>
+<h2 id="limitations">Limitations</h2>
+<h3 id="false-negatives-cppcheck-cannot-avoid">False negatives cppcheck cannot avoid</h3>
+<pre><code class="hljs text language-text">#if A &amp;&amp; B &amp;&amp; !C
     int hidden_;  // needs -DA=1 -DB=1 -UC
 #endif
 </code></pre>
-<p><p>The script flags 3+ macro compound conditions for manual review. Run cppcheck manually with the specific combination:</p>
-<p><pre><code>cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
+<p>The script flags 3+ macro compound conditions for manual review. Run cppcheck manually with the specific combination:</p>
+<pre><code class="hljs bash language-bash">cppcheck -DA=1 -DB=1 -UC --<span class="hljs-built_in">enable</span>=warning --inconclusive file.cpp
 </code></pre>
-<p><h3>Build-system integration</h3>
-<p><p>Without <code>-I</code> paths, headers fail to parse and <code>#if</code>-guarded members in headers are invisible. Always pass <code>-I</code> flags or use <code>compile_commands.json</code>.</p>
-<p><h3>cppcheck limitations</h3>
-<p><li>Does not track `memset()`, placement `new`, or helper functions in the constructor body</li>
-<li>Marking a member as `= default` suppresses warnings</li>
+<h3 id="build-system-integration">Build-system integration</h3>
+<p>Without <code>-I</code> paths, headers fail to parse and <code>#if</code>-guarded members in headers are invisible. Always pass <code>-I</code> flags or use <code>compile_commands.json</code>.</p>
+<h3 id="cppcheck-limitations">cppcheck limitations</h3>
+<ul>
+<li>Does not track <code>memset()</code>, placement <code>new</code>, or helper functions in the constructor body</li>
+<li>Marking a member as <code>= default</code> suppresses warnings</li>
 <li>Members with user-defined default constructors are never flagged</li>
-<p><h3>Auto-fix limitations (`cppcheck-fix-uninit.py`)</h3>
-<p><li>**Reference members** (`T&`, `const T&`) cannot be auto-fixed — no known binding target</li>
-<li>**Header parsing** is regex-based; complex types (nested templates, macros-as-types) fall back to `{}` (safe)</li>
-<li>**Preprocessor macros in member declarations** (`STATUS_FLAG flags_;`) are not parsed — fall back to `{}`</li>
-<li>**Init-list mode** (`--init-list`) skips `#if`-guarded members due to colon/comma syntax constraints. In-class mode (default) handles them correctly</li>
-<p><h2>Workflow</h2>
-<p><li>**Generate test files** — `./generate_test.sh` (resets both test suites)</li>
-<li>**Scan** — `./check_uninit_all.sh -I /api *.cpp` to see what's uninitialized</li>
-<li>**Preview with guards** — `./cppcheck-fix-uninit.py -v --report-only *.cpp`</li>
-<li>**Auto-fix** — `./cppcheck-fix-uninit.py *.cpp` (adds in-class defaults)</li>
-<li>**Compile + test** — Verify it compiles and works</li>
-<li>**Manual review** — Check `*.bak` files; handle reference members manually</li>
-<li>**Repeat** — `./generate_test.sh` resets for another round</li>
-<p><p>For best results with build flags:</p>
-<p><pre><code>bear -- ./build_script.sh
+</ul>
+<h3 id="auto-fix-limitations-cppcheck-fix-uninitpy">Auto-fix limitations (<code>cppcheck-fix-uninit.py</code>)</h3>
+<ul>
+<li><strong>Reference members</strong> (<code>T&amp;</code>, <code>const T&amp;</code>) cannot be auto-fixed — no known binding target</li>
+<li><strong>Header parsing</strong> is regex-based; complex types (nested templates, macros-as-types) fall back to <code>{}</code> (safe)</li>
+<li><strong>Preprocessor macros in member declarations</strong> (<code>STATUS_FLAG flags_;</code>) are not parsed — fall back to <code>{}</code></li>
+<li><strong>Init-list mode</strong> (<code>--init-list</code>) skips <code>#if</code>-guarded members due to colon/comma syntax constraints. In-class mode (default) handles them correctly</li>
+</ul>
+<h2 id="workflow">Workflow</h2>
+<ol>
+<li><strong>Generate test files</strong> — <code>./generate_test.sh</code> (resets both test suites)</li>
+<li><strong>Scan</strong> — <code>./check_uninit_all.sh -I /api *.cpp</code> to see what's uninitialized</li>
+<li><strong>Preview with guards</strong> — <code>./cppcheck-fix-uninit.py -v --report-only *.cpp</code></li>
+<li><strong>Auto-fix</strong> — <code>./cppcheck-fix-uninit.py *.cpp</code> (adds in-class defaults)</li>
+<li><strong>Compile + test</strong> — Verify it compiles and works</li>
+<li><strong>Manual review</strong> — Check <code>*.bak</code> files; handle reference members manually</li>
+<li><strong>Repeat</strong> — <code>./generate_test.sh</code> resets for another round</li>
+</ol>
+<p>For best results with build flags:</p>
+<pre><code class="hljs bash language-bash">bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py --project=compile_commands.json
 </code></pre>
-<p><h2>Test files</h2>
-<p><table>
-<tr><th>File</th><th>Uninit members</th><th>Features</th></tr>
-<tr><td>`uninit_test.h/cpp`</td><td>57</td><td>All primitive/ptr/ref/volatile types, no guards</td></tr>
-<tr><td>`uninit_guarded_test.h/cpp`</td><td>15</td><td>6 feature flags, compound `&&`/`\</td><td>\</td><td>`/`!` guards</td></tr>
+<h2 id="test-files">Test files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Uninit members</th>
+<th>Features</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>uninit_test.h/cpp</code></td>
+<td>57</td>
+<td>All primitive/ptr/ref/volatile types, no guards</td>
+</tr>
+<tr>
+<td><code>uninit_guarded_test.h/cpp</code></td>
+<td>15</td>
+<td>6 feature flags, compound <code>&amp;&amp;</code>/<code>||</code>/<code>!</code> guards</td>
+</tr>
+</tbody>
 </table>
 <p>Regenerate with <code>./generate_test.sh</code>.</p>
-<p><h2>Dependencies</h2>
-<p><li>`cppcheck` (2.13+ recommended)</li>
-<li>`grep`, `sed`, `sort`, `xargs` — bash script</li>
-<li>`python3` — Python fixer</li>
-<li>`bear` — optional, for `compile_commands.json`</li>
-<p></body></html>
+<h2 id="dependencies">Dependencies</h2>
+<ul>
+<li><code>cppcheck</code> (2.13+ recommended)</li>
+<li><code>grep</code>, <code>sed</code>, <code>sort</code>, <code>xargs</code> — bash script</li>
+<li><code>python3</code> — Python fixer</li>
+<li><code>bear</code> — optional, for <code>compile_commands.json</code></li>
+</ul>
+
+          </div>
+          <style type='text/css'>body {
+    font: 400 16px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #111;
+    background-color: #fbfbfb;
+    -webkit-text-size-adjust: 100%;
+    -webkit-font-feature-settings: "kern" 1;
+    -moz-font-feature-settings: "kern" 1;
+    -o-font-feature-settings: "kern" 1;
+    font-feature-settings: "kern" 1;
+    font-kerning: normal;
+    padding: 30px;
+}
+
+@media only screen and (max-width: 600px) {
+    body {
+        padding: 5px;
+    }
+    body>#content {
+        padding: 0px 20px 20px 20px !important;
+    }
+}
+
+body>#content {
+    margin: 0px;
+    max-width: 900px;
+    border: 1px solid #e1e4e8;
+    padding: 10px 40px;
+    padding-bottom: 20px;
+    border-radius: 2px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+summary {
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+hr {
+    color: #bbb;
+    background-color: #bbb;
+    height: 1px;
+    flex: 0 1 auto;
+    margin: 1em 0;
+    padding: 0;
+    border: none;
+}
+
+.hljs-operator {
+    color: #868686;
+    /* There is a bug where the syntax highlighter would pick no color for e.g. `&&` symbols in the code samples. Let's overwrite this */
+}
+
+
+/**
+ * Links
+ */
+
+a {
+    color: #0366d6;
+    text-decoration: none;
+}
+
+a:visited {
+    color: #0366d6;
+}
+
+a:hover {
+    color: #0366d6;
+    text-decoration: underline;
+}
+
+pre {
+    background-color: #f6f8fa;
+    border-radius: 3px;
+    font-size: 85%;
+    line-height: 1.45;
+    overflow: auto;
+    padding: 16px;
+}
+
+
+/**
+  * Code blocks
+  */
+
+code {
+    background-color: rgba(27, 31, 35, .05);
+    border-radius: 3px;
+    font-size: 85%;
+    margin: 0;
+    word-wrap: break-word;
+    padding: .2em .4em;
+    font-family: SFMono-Regular, Consolas, Liberation Mono, Menlo, Courier, monospace;
+}
+
+pre>code {
+    background-color: transparent;
+    border: 0;
+    display: inline;
+    line-height: inherit;
+    margin: 0;
+    overflow: visible;
+    padding: 0;
+    word-wrap: normal;
+    font-size: 100%;
+}
+
+
+/**
+ * Blockquotes
+ */
+
+blockquote {
+    margin-left: 30px;
+    margin-top: 0px;
+    margin-bottom: 16px;
+    border-left-width: 3px;
+    padding: 0 1em;
+    color: #828282;
+    border-left: 4px solid #e8e8e8;
+    padding-left: 15px;
+    font-size: 18px;
+    letter-spacing: -1px;
+    font-style: italic;
+}
+
+blockquote * {
+    font-style: normal !important;
+    letter-spacing: 0;
+    color: #6a737d !important;
+}
+
+
+/**
+ * Tables
+ */
+
+table {
+    border-spacing: 2px;
+    display: block;
+    font-size: 14px;
+    overflow: auto;
+    width: 100%;
+    margin-bottom: 16px;
+    border-spacing: 0;
+    border-collapse: collapse;
+}
+
+td {
+    padding: 6px 13px;
+    border: 1px solid #dfe2e5;
+}
+
+th {
+    font-weight: 600;
+    padding: 6px 13px;
+    border: 1px solid #dfe2e5;
+}
+
+tr {
+    background-color: #fff;
+    border-top: 1px solid #c6cbd1;
+}
+
+table tr:nth-child(2n) {
+    background-color: #f6f8fa;
+}
+
+
+/**
+ * Others
+ */
+
+img {
+    max-width: 100%;
+}
+
+p {
+    line-height: 24px;
+    font-weight: 400;
+    font-size: 16px;
+    color: #24292e;
+}
+
+ul {
+    margin-top: 0;
+}
+
+li {
+    color: #24292e;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+li+li {
+    margin-top: 0.25em;
+}
+
+* {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    color: #24292e;
+}
+
+a:visited {
+    color: #0366d6;
+}
+
+h1,
+h2,
+h3 {
+    border-bottom: 1px solid #eaecef;
+    color: #111;
+    /* Darker */
+}
+
+code>* {
+    font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace !important;
+}</style>
+          <style type='text/css'>pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em
+}
+code.hljs {
+  padding: 3px 5px
+}
+/*
+
+Atom One Dark by Daniel Gamage
+Original One Dark Syntax theme from https://github.com/atom/one-dark-syntax
+
+base:    #282c34
+mono-1:  #abb2bf
+mono-2:  #818896
+mono-3:  #5c6370
+hue-1:   #56b6c2
+hue-2:   #61aeee
+hue-3:   #c678dd
+hue-4:   #98c379
+hue-5:   #e06c75
+hue-5-2: #be5046
+hue-6:   #d19a66
+hue-6-2: #e6c07b
+
+*/
+.hljs {
+  color: #abb2bf;
+  background: #282c34
+}
+.hljs-comment,
+.hljs-quote {
+  color: #5c6370;
+  font-style: italic
+}
+.hljs-doctag,
+.hljs-keyword,
+.hljs-formula {
+  color: #c678dd
+}
+.hljs-section,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-deletion,
+.hljs-subst {
+  color: #e06c75
+}
+.hljs-literal {
+  color: #56b6c2
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: #98c379
+}
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-number {
+  color: #d19a66
+}
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-title {
+  color: #61aeee
+}
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: #e6c07b
+}
+.hljs-emphasis {
+  font-style: italic
+}
+.hljs-strong {
+  font-weight: bold
+}
+.hljs-link {
+  text-decoration: underline
+}</style>
+        </body>
+      </html>
