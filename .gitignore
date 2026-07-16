@@ -15,3 +15,9 @@ uninit_guarded_test.cpp
 uninit_report.txt
 *.bak
 *.html
+
+# Archive outputs
+*.gz
+
+# Allow README.html (tracked in git despite *.html above)
+!README.html
