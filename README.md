@@ -15,7 +15,7 @@ Find and auto-fix uninitialized member variables in C++ classes — handles `#if
 ./cppcheck-fix-uninit.py --report-only *.cpp
 
 # Or all at once: find + fix + verify
-./cppcheck-fix-uninit.py *.cpp && echo "0 warnings:" && ./cppcheck-fix-uninit.py --report-only *.cpp
+./cppcheck-fix-uninit.py *.cpp && ./cppcheck-fix-uninit.py --report-only *.cpp
 
 # For #if-heavy code, in-class mode handles guards automatically (default).
 # For constructor init-lists instead: add --init-list
