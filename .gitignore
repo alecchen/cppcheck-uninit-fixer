@@ -1,0 +1,17 @@
+markdown-to-html-github-style
+
+# Generated test files (by generate_test.sh)
+uninit_test.h
+uninit_test.cpp
+uninit_guarded_test.h
+uninit_guarded_test.cpp
+
+# Backups and temp files
+*.swp
+*.clean
+
+# cppcheck artifacts
+.cppcheck-cache/
+uninit_report.txt
+*.bak
+*.html
