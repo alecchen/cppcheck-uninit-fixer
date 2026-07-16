@@ -6,6 +6,7 @@ Usage:
     ./cppcheck-fix-uninit.py file1.cpp file2.cpp
     ./cppcheck-fix-uninit.py -I /api/headers *.cpp
     ./cppcheck-fix-uninit.py --report-only *.cpp
+    ./cppcheck-fix-uninit.py --project=compile_commands.json
 
 Finds uninitialized members using cppcheck (two-pass: base + all-macros-defined),
 then inserts missing initializations into constructors. Creates .bak backups.
@@ -15,6 +16,7 @@ const/volatile qualified types, pointer qualifier variants.
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -26,8 +28,14 @@ from collections import defaultdict
 # Run cppcheck
 # ---------------------------------------------------------------------------
 
-def cppcheck_xml(sources, defines=None):
-    """Run cppcheck with --xml, return parsed ElementTree root."""
+
+def cppcheck_xml(sources, defines=None, project=None):
+    """Run cppcheck with --xml, return parsed ElementTree root.
+
+    Pass sources (for header/macro scanning) and optionally project
+    (compile_commands.json path) for cppcheck's own analysis.
+    When project is set, cppcheck gets --project=<path> instead of sources.
+    """
     cmd = [
         "cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
         "--max-configs=9999", "--check-level=exhaustive",
@@ -37,7 +45,10 @@ def cppcheck_xml(sources, defines=None):
     ]
     if defines:
         cmd.extend(defines)
-    cmd.extend(sources)
+    if project:
+        cmd.append(f'--project={project}')
+    else:
+        cmd.extend(sources)
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
     # cppcheck writes XML to stderr, progress to stdout
@@ -86,8 +97,29 @@ def extract_macros(sources):
 
 
 # ---------------------------------------------------------------------------
+# Parse compilation database
+# ---------------------------------------------------------------------------
+
+
+def parse_compilation_db(path):
+    """Extract source file paths from a compile_commands.json."""
+    with open(path) as f:
+        entries = json.load(f)
+    sources = []
+    for e in entries:
+        src = e.get('file', '')
+        if not src:
+            continue
+        if not os.path.isabs(src):
+            src = os.path.join(e.get('directory', ''), src)
+        sources.append(os.path.normpath(src))
+    return sorted(set(s for s in sources if s.endswith(('.cpp', '.c', '.cc', '.cxx'))))
+
+
+# ---------------------------------------------------------------------------
 # Parse cppcheck XML
 # ---------------------------------------------------------------------------
+
 
 def parse_findings(xml_root):
     """Extract (file, line, class_name, member_name) from uninitMemberVar errors."""
@@ -119,6 +151,7 @@ def parse_findings(xml_root):
 # Find header files
 # ---------------------------------------------------------------------------
 
+
 def find_headers(sources, include_dirs=None):
     """Collect .h/.hpp files co-located with source files or in -I dirs."""
     headers = set()
@@ -145,6 +178,7 @@ def find_headers(sources, include_dirs=None):
 # Parse member types from headers
 # ---------------------------------------------------------------------------
 
+
 def parse_member_types(headers):
     """Extract {class_name: {member_name: {'type': str, 'guard': str|None}}}.
 
@@ -163,7 +197,6 @@ def parse_member_types(headers):
             continue
 
         # Remove string literals and comments
-        raw = text
         text = re.sub(r'"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"', '""', text)
         text = re.sub(r'//.*', '', text)
         text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
@@ -320,6 +353,7 @@ def default_init(type_info):
 # Fix constructors
 # ---------------------------------------------------------------------------
 
+
 def fix_file(filepath, grouped, member_types):
     """Insert missing member initializations. Returns (#constructors-fixed, [errors])."""
     if not os.path.isfile(filepath):
@@ -447,6 +481,8 @@ def fix_in_class(header_files, findings, member_types):
                 f.writelines(lines)
 
     return fixed
+
+
 def _build_init_lines(entries, append):
     """Build formatted init-list lines.
 
@@ -563,17 +599,12 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
             # Insert brace on its own line + new entries before it
             # We can't easily splice before an existing line, so:
             # Remove brace text, add entries, re-add brace on its own line
-            current_brace = lines[brace_line_idx]
             brace_ws = ' ' * (len(lines[brace_line_idx]) - len(lines[brace_line_idx].lstrip()))
             lines[brace_line_idx] = ''
-            if not lines[brace_line_idx].strip():
-                # line is now empty brace content -- replace entirely
-                pass
             # Insert at the brace position
             if last_entry >= start_0idx and lines[last_entry].strip():
                 for k, il in enumerate(lines_to_add):
                     lines.insert(last_entry + k + 1, il)
-                # adjust brace_line_idx if lines shifted
             else:
                 # fallback: insert before brace
                 for k, il in enumerate(lines_to_add):
@@ -607,10 +638,12 @@ def insert(lines, start_0idx, class_name, member_names, member_types):
 # main
 # ---------------------------------------------------------------------------
 
+
 def main():
     ap = argparse.ArgumentParser(
         description='Find and auto-fix uninitialized C++ member variables.')
-    ap.add_argument('sources', nargs='+', help='Source files (.cpp)')
+    ap.add_argument('sources', nargs='*', default=[],
+                    help='Source files (.cpp). May be omitted when --project is given.')
     ap.add_argument('--report-only', action='store_true',
                     help='Only print findings, do not modify')
     ap.add_argument('-v', '--verbose', action='store_true',
@@ -625,14 +658,40 @@ def main():
                     help='Include path')
     ap.add_argument('-D', dest='defines', action='append', default=[],
                     help='Define macro')
+    ap.add_argument('--project', dest='project', default=None,
+                    help='Path to compile_commands.json for build-aware analysis. '
+                         'When set, cppcheck uses the compilation database instead '
+                         'of requiring -I and -D flags. Source files from the DB are '
+                         'also used for header/macro scanning.')
     args = ap.parse_args()
 
     global VERBOSE
     VERBOSE = args.verbose
 
     sources = [os.path.abspath(s) for s in args.sources if os.path.isfile(s)]
-    if not sources:
-        print("Error: no source files found", file=sys.stderr)
+
+    # When --project is given, extract source files from the compilation DB
+    project_sources = []
+    if args.project:
+        project_path = os.path.abspath(args.project)
+        if not os.path.isfile(project_path):
+            print(f"Error: --project file not found: {project_path}", file=sys.stderr)
+            sys.exit(1)
+        project_sources = parse_compilation_db(project_path)
+        if not project_sources:
+            print("Error: no source files found in compile_commands.json", file=sys.stderr)
+            sys.exit(1)
+        if VERBOSE:
+            print(f"Found {len(project_sources)} source(s) in compilation database",
+                  file=sys.stderr)
+            for s in project_sources:
+                print(f"  {os.path.basename(s)}", file=sys.stderr)
+
+    # Merge project sources with positional sources
+    all_sources = sources + project_sources
+    if not all_sources:
+        print("Error: no source files found. Pass .cpp files or use --project.",
+              file=sys.stderr)
         sys.exit(1)
 
     extra = []
@@ -641,7 +700,7 @@ def main():
     for d in args.defines:
         extra.extend(['-D', d])
 
-    also_read = sources + find_headers(sources, args.includes)
+    also_read = all_sources + find_headers(all_sources, args.includes)
 
     # ---- Phase 1: Extract macros for Pass 2 ----
     print("Phase 1: scanning for macros...", file=sys.stderr)
@@ -651,26 +710,30 @@ def main():
         for m in macros:
             print(f"    {m}", file=sys.stderr)
     if not macros and VERBOSE:
-        print("    (none found -- skipping pass 2)", file=sys.stderr)
+        print("    (none found - skipping pass 2)", file=sys.stderr)
 
     # ---- Phase 2: Run cppcheck (Pass 1 + Pass 2) ----
-    print("Phase 2: running cppcheck (pass 1 -- base config)...", file=sys.stderr)
+    print("Phase 2: running cppcheck (pass 1 - base config)...", file=sys.stderr)
     if VERBOSE:
+        src_part = [f'--project={args.project}'] if args.project else sources
         cmd = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
                "--max-configs=9999", "--check-level=exhaustive",
-               "-j", str(os.cpu_count() or 4)] + extra + sources
+               "-j", str(os.cpu_count() or 4)] + extra + src_part
         print(f"  cmd: {' '.join(cmd)}", file=sys.stderr)
-    xml_root = cppcheck_xml(sources, extra)
+
+    project_path = os.path.abspath(args.project) if args.project else None
+    xml_root = cppcheck_xml(sources, extra, project=project_path)
 
     if macros:
         all_defs = [f'-D{m}=1' for m in macros]
-        print("Phase 2: running cppcheck (pass 2 -- all macros defined)...", file=sys.stderr)
+        print("Phase 2: running cppcheck (pass 2 - all macros defined)...", file=sys.stderr)
         if VERBOSE:
+            src_part = [f'--project={args.project}'] if args.project else sources
             cmd2 = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
                     "--max-configs=9999", "--check-level=exhaustive",
-                    "-j", str(os.cpu_count() or 4)] + extra + all_defs + sources
+                    "-j", str(os.cpu_count() or 4)] + extra + all_defs + src_part
             print(f"  cmd: {' '.join(cmd2)}", file=sys.stderr)
-        xml2 = cppcheck_xml(sources, extra + all_defs)
+        xml2 = cppcheck_xml(sources, extra + all_defs, project=project_path)
         # Merge second pass errors into first
         e1 = xml_root.find('errors')
         e2 = xml2.find('errors')
@@ -691,7 +754,7 @@ def main():
         for f in findings:
             by_line[(f[0], f[1])].append((f[2], f[3]))
         for (fp, ln), members in sorted(by_line.items()):
-            print(f"    {os.path.basename(fp)}:{ln} -- {len(members)} member(s)", file=sys.stderr)
+            print(f"    {os.path.basename(fp)}:{ln} - {len(members)} member(s)", file=sys.stderr)
             for cls, mname in sorted(members):
                 print(f"      {cls}::{mname}", file=sys.stderr)
 
@@ -702,7 +765,7 @@ def main():
 
     # ---- Phase 4: Parse member types ----
     print("Phase 4: parsing member types from headers...", file=sys.stderr)
-    headers = find_headers(sources, args.includes)
+    headers = find_headers(all_sources, args.includes)
     member_types = parse_member_types(headers)
     total_types = sum(len(v) for v in member_types.values())
     print(f"  parsed {total_types} member(s) from headers", file=sys.stderr)
@@ -717,7 +780,7 @@ def main():
                     type_str = str(minfo)
                     guard = None
                 default = default_init(minfo)
-                dv = default or "(reference -- skipped)"
+                dv = default or "(reference - skipped)"
                 g = f" [{guard}]" if guard else ""
                 print(f"      {type_str} {mname} -> {dv}{g}", file=sys.stderr)
 

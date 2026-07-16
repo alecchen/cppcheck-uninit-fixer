@@ -128,6 +128,11 @@ Use `--init-list` for projects that prefer explicit per-constructor initializati
 ./cppcheck-fix-uninit.py *.cpp
 ./cppcheck-fix-uninit.py -I /path/to/api *.cpp
 
+# With compile_commands.json (resolves -I and -D from build)
+bear -- ./build_script.sh
+./cppcheck-fix-uninit.py --project=compile_commands.json
+./cppcheck-fix-uninit.py --project=compile_commands.json main.cpp
+
 # Verbose: show macros, cppcheck commands, member types with guards
 ./cppcheck-fix-uninit.py -v *.cpp
 
@@ -143,14 +148,7 @@ Creates `.bak` backup files before any modification.
 
 **Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
-**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing — the Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script.
-
-### With compile_commands.json (best results)
-
-```bash
-bear -- ./build_script.sh
-./cppcheck-fix-uninit.py --project=compile_commands.json
-```
+**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing — the Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script. Passing `--project=compile_commands.json` resolves includes automatically.
 
 ### Test harness
 
@@ -168,8 +166,10 @@ bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py uninit_test.cpp uninit_guarded_test.cpp
 
 # Verify #elif/#else guard chain tracking
-python3 test_elif_guards.py
 make check
+
+# Full test suite (guard chain + -I/--project integration)
+make check-all
 ```
 
 ## Supported Member Types
@@ -181,8 +181,8 @@ All primitive types, pointers, references, and enums are detected **regardless o
 | Category | Types | Default init value |
 |---|---|---|
 | **Plain integers** | `char`, `signed/unsigned char`, `short`, `unsigned short` | `0` / `'\0'` |
-| | `int`, `unsigned`, `long`, `unsigned long` | `0` / `0L` |
-| | `long long`, `unsigned long long` | `0LL` |
+| | `int`, `unsigned`, `long`, `unsigned long` | `0` |
+| | `long long`, `unsigned long long` | `0` |
 | **Fixed-width** | `int8_t..uint64_t`, `size_t`, `ptrdiff_t` | `0` |
 | **Floating-point** | `float` / `double` / `long double` | `0.0f` / `0.0` |
 | **Enum** | `enum` (scoped and unscoped) | `{}` |
@@ -264,7 +264,7 @@ class Foo {
 ```cpp
 Foo::Foo()
     : a_(0), b_(0.0), c_(0.0f), d_(false), e_('\0')
-    , f_(0), g_(0L), h_(0U), i_(nullptr), j_(nullptr)
+    , f_(0), g_(0), h_(0), i_(nullptr), j_(nullptr)
     , k_(0), l_(0)
     , n_(nullptr), o_(nullptr), p_(nullptr)
     , q_(0), r_(0), s_(0), t_(0), sz_(0)
@@ -383,12 +383,13 @@ bear -- ./build_script.sh
 | `uninit_test.h/cpp` | 57 | All primitive/ptr/ref/volatile types, no guards |
 | `uninit_guarded_test.h/cpp` | 15 | 6 feature flags, compound `&&`/`\|\|`/`!` guards |
 | `test_elif_guards.py` | — | Unit test for `#elif`/`#else` guard chain tracking |
+| `test_bear_integration.py` | — | Integration test for `-I` and `--project` workflows |
 
-Regenerate with `./generate_test.sh`. Verify guard tracking with `make check` or `python3 test_elif_guards.py`.
+Regenerate test files with `./generate_test.sh`. Run `make check` for quick checks or `make check-all` for full suite.
 
 ## Dependencies
 
 - `cppcheck` (2.13+ recommended)
 - `grep`, `sed`, `sort`, `xargs` — bash script
 - `python3` — Python fixer
-- `bear` — optional, for `compile_commands.json`
+- `bear` — optional, for `--project` support

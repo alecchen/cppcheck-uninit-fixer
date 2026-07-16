@@ -155,6 +155,11 @@ Scans all source files for macro names (filtering out include guards and comment
 ./cppcheck-fix-uninit.py *.cpp
 ./cppcheck-fix-uninit.py -I /path/to/api *.cpp
 
+<span class="hljs-comment"># With compile_commands.json (resolves -I and -D from build)</span>
+bear -- ./build_script.sh
+./cppcheck-fix-uninit.py --project=compile_commands.json
+./cppcheck-fix-uninit.py --project=compile_commands.json main.cpp
+
 <span class="hljs-comment"># Verbose: show macros, cppcheck commands, member types with guards</span>
 ./cppcheck-fix-uninit.py -v *.cpp
 
@@ -167,11 +172,7 @@ Scans all source files for macro names (filtering out include guards and comment
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing — the Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script.</p>
-<h3 id="with-compile_commandsjson-best-results">With compile_commands.json (best results)</h3>
-<pre><code class="hljs bash language-bash">bear -- ./build_script.sh
-./cppcheck-fix-uninit.py --project=compile_commands.json
-</code></pre>
+<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing — the Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script. Passing <code>--project=compile_commands.json</code> resolves includes automatically.</p>
 <h3 id="test-harness">Test harness</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Regenerate both test suites (resets all uninitialized members)</span>
 ./generate_test.sh
@@ -186,8 +187,10 @@ Scans all source files for macro names (filtering out include guards and comment
 ./cppcheck-fix-uninit.py uninit_test.cpp uninit_guarded_test.cpp
 
 <span class="hljs-comment"># Verify #elif/#else guard chain tracking</span>
-python3 test_elif_guards.py
 make check
+
+<span class="hljs-comment"># Full test suite (guard chain + -I/--project integration)</span>
+make check-all
 </code></pre>
 <h2 id="supported-member-types">Supported Member Types</h2>
 <p>All primitive types, pointers, references, and enums are detected <strong>regardless of qualifiers</strong> — <code>const</code>, <code>volatile</code>, <code>const volatile</code> — on the type, the pointer, or both. Fixed-width integer types from <code>&lt;cstdint&gt;</code> are detected too.</p>
@@ -209,12 +212,12 @@ make check
 <tr>
 <td></td>
 <td><code>int</code>, <code>unsigned</code>, <code>long</code>, <code>unsigned long</code></td>
-<td><code>0</code> / <code>0L</code></td>
+<td><code>0</code></td>
 </tr>
 <tr>
 <td></td>
 <td><code>long long</code>, <code>unsigned long long</code></td>
-<td><code>0LL</code></td>
+<td><code>0</code></td>
 </tr>
 <tr>
 <td><strong>Fixed-width</strong></td>
@@ -362,7 +365,7 @@ make check
 <h3 id="how-to-fix-init-list-opt-in-with---init-list">How to fix (init-list, opt-in with <code>--init-list</code>)</h3>
 <pre><code class="hljs cpp language-cpp">Foo::<span class="hljs-built_in">Foo</span>()
     : <span class="hljs-built_in">a_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">b_</span>(<span class="hljs-number">0.0</span>), <span class="hljs-built_in">c_</span>(<span class="hljs-number">0.0f</span>), <span class="hljs-built_in">d_</span>(<span class="hljs-literal">false</span>), <span class="hljs-built_in">e_</span>(<span class="hljs-string">&#x27;\0&#x27;</span>)
-    , <span class="hljs-built_in">f_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">g_</span>(<span class="hljs-number">0L</span>), <span class="hljs-built_in">h_</span>(<span class="hljs-number">0U</span>), <span class="hljs-built_in">i_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">j_</span>(<span class="hljs-literal">nullptr</span>)
+    , <span class="hljs-built_in">f_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">g_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">h_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">i_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">j_</span>(<span class="hljs-literal">nullptr</span>)
     , <span class="hljs-built_in">k_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">l_</span>(<span class="hljs-number">0</span>)
     , <span class="hljs-built_in">n_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">o_</span>(<span class="hljs-literal">nullptr</span>), <span class="hljs-built_in">p_</span>(<span class="hljs-literal">nullptr</span>)
     , <span class="hljs-built_in">q_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">r_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">s_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">t_</span>(<span class="hljs-number">0</span>), <span class="hljs-built_in">sz_</span>(<span class="hljs-number">0</span>)
@@ -472,15 +475,20 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <td>—</td>
 <td>Unit test for <code>#elif</code>/<code>#else</code> guard chain tracking</td>
 </tr>
+<tr>
+<td><code>test_bear_integration.py</code></td>
+<td>—</td>
+<td>Integration test for <code>-I</code> and <code>--project</code> workflows</td>
+</tr>
 </tbody>
 </table>
-<p>Regenerate with <code>./generate_test.sh</code>. Verify guard tracking with <code>make check</code> or <code>python3 test_elif_guards.py</code>.</p>
+<p>Regenerate test files with <code>./generate_test.sh</code>. Run <code>make check</code> for quick checks or <code>make check-all</code> for full suite.</p>
 <h2 id="dependencies">Dependencies</h2>
 <ul>
 <li><code>cppcheck</code> (2.13+ recommended)</li>
 <li><code>grep</code>, <code>sed</code>, <code>sort</code>, <code>xargs</code> — bash script</li>
 <li><code>python3</code> — Python fixer</li>
-<li><code>bear</code> — optional, for <code>compile_commands.json</code></li>
+<li><code>bear</code> — optional, for <code>--project</code> support</li>
 </ul>
 
           </div>

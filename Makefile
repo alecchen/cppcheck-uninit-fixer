@@ -1,4 +1,4 @@
-.PHONY: clean distclean archive check
+.PHONY: clean distclean archive check check-all
 
 # Remove temp/cache/backup files from cppcheck runs
 clean:
@@ -12,6 +12,10 @@ distclean: clean
 archive:
 	git archive -o cppcheck-uninit-fixer.tar.gz --prefix=cppcheck-uninit-fixer/ HEAD '*.sh' '*.py' README.md README.html Makefile
 
-# Verify guard tracking (elif/else chain logic)
+# Quick check: guard chain tracking
 check:
 	python3 test_elif_guards.py
+
+# Full checks: guard tracking + -I/--project integration
+check-all: check
+	python3 test_bear_integration.py
