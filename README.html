@@ -8,12 +8,12 @@
         <body>
           <div id='content'>
       <h1 id="cppcheck-uninitialized-member-detector">cppcheck Uninitialized Member Detector</h1>
-<p>Find and auto-fix uninitialized member variables in C++ classes — handles <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> preprocessor guards automatically.</p>
+<p>Find and auto-fix uninitialized member variables in C++ classes with automatic handling of <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> preprocessor guards.</p>
 <h2 id="quick-start">Quick Start</h2>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># 1. Find uninitialized members</span>
 ./check_uninit_all.sh *.cpp
 
-<span class="hljs-comment"># 2. Auto-fix (in-class defaults = header int a_; → int a_ = 0;)</span>
+<span class="hljs-comment"># 2. Auto-fix (in-class defaults = header int a_; -&gt; int a_ = 0;)</span>
 ./cppcheck-fix-uninit.py *.cpp
 
 <span class="hljs-comment"># 3. Verify clean</span>
@@ -26,9 +26,9 @@
 <span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
 </code></pre>
 <h2 id="the-problem">The Problem</h2>
-<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has two critical blind spots when the code uses preprocessor conditionals:</p>
+<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has two blind spots when the code uses preprocessor conditionals:</p>
 <ol>
-<li><p><strong>Single-flag permutations only.</strong> cppcheck's auto-config detection checks each undefined <code>#if</code> symbol independently. It <strong>never</strong> tries combinations — so <code>#if A &amp;&amp; B</code> is never checked in the config where both are active.</p></li>
+<li><p><strong>Single-flag permutations only.</strong> cppcheck's auto-config detection checks each undefined <code>#if</code> symbol independently. It never tries combinations. So <code>#if A &amp;&amp; B</code> is never checked in the config where both are active.</p></li>
 <li><p><strong>Default config limit.</strong> cppcheck checks at most 12 configs by default. Codebases with many feature flags may have relevant configs skipped entirely.</p></li>
 </ol>
 <p>Both scripts work around these limitations with a two-pass strategy.</p>
@@ -63,7 +63,7 @@ Runs cppcheck with no extra defines, but with the config limit raised to 9999.</
 <tr>
 <td><code>#if A &amp;&amp; !B</code></td>
 <td>Yes</td>
-<td>A-on config has B off → condition true</td>
+<td>A-on config has B off, condition true</td>
 </tr>
 <tr>
 <td><code>#if A || B</code></td>
@@ -91,7 +91,7 @@ Scans all source files for macro names (filtering out include guards and comment
 <tr>
 <td><code>#if A &amp;&amp; B</code></td>
 <td>Yes</td>
-<td>Both defined → condition true</td>
+<td>Both defined, condition true</td>
 </tr>
 <tr>
 <td><code>#if defined(A) &amp;&amp; defined(B)</code></td>
@@ -106,7 +106,7 @@ Scans all source files for macro names (filtering out include guards and comment
 <tr>
 <td><code>#if A &amp;&amp; B &amp;&amp; !C</code></td>
 <td><strong>No</strong></td>
-<td>C is defined → <code>!C</code> is false</td>
+<td>C is defined, <code>!C</code> is false</td>
 </tr>
 </tbody>
 </table>
@@ -118,7 +118,7 @@ Scans all source files for macro names (filtering out include guards and comment
 </code></pre>
 <h3 id="fix-mode-in-class-defaults-default-vs-init-list-opt-in">Fix mode: in-class defaults (default) vs init-list (opt-in)</h3>
 <p>The Python fixer has two modes:</p>
-<p><strong>Default: in-class initializers</strong> — adds <code>= 0</code> / <code>= nullptr</code> / <code>= false</code> directly to the member declaration in the header:</p>
+<p><strong>Default: in-class initializers.</strong> Adds <code>= 0</code> / <code>= nullptr</code> / <code>= false</code> directly to the member declaration in the header:</p>
 <pre><code class="hljs cpp language-cpp"><span class="hljs-comment">// Before                     // After</span>
 <span class="hljs-type">int</span> a_;                       <span class="hljs-type">int</span> a_ = <span class="hljs-number">0</span>;
 <span class="hljs-type">const</span> <span class="hljs-type">char</span>* label_;           <span class="hljs-type">const</span> <span class="hljs-type">char</span>* label_ = <span class="hljs-literal">nullptr</span>;
@@ -129,7 +129,7 @@ Scans all source files for macro names (filtering out include guards and comment
     <span class="hljs-type">int</span> cache_size_ = <span class="hljs-number">0</span>;   <span class="hljs-comment">// only compiled when BUILD_PERFORMANCE is defined</span>
 <span class="hljs-meta">#<span class="hljs-keyword">endif</span></span>
 </code></pre>
-<p><strong>Opt-in: constructor init-list</strong> — adds <code>: member_(0)</code> to each constructor in the <code>.cpp</code>:</p>
+<p><strong>Opt-in: constructor init-list.</strong> Adds <code>: member_(0)</code> to each constructor in the <code>.cpp</code>:</p>
 <pre><code class="hljs bash language-bash">./cppcheck-fix-uninit.py --init-list *.cpp
 </code></pre>
 <p>Produces:</p>
@@ -138,7 +138,7 @@ Scans all source files for macro names (filtering out include guards and comment
     , <span class="hljs-built_in">label_</span>(<span class="hljs-literal">nullptr</span>)
 {}
 </code></pre>
-<p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. Note that <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode — the C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
+<p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
 <h2 id="usage">Usage</h2>
 <h3 id="find-only-bash-script">Find only (bash script)</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files</span>
@@ -171,8 +171,8 @@ bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py -v --report-only *.cpp
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
-<p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing — the Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script. Passing <code>--project=compile_commands.json</code> resolves includes automatically.</p>
+<p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
+<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing. The Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script. Passing <code>--project=compile_commands.json</code> resolves includes automatically.</p>
 <h3 id="test-harness">Test harness</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Regenerate both test suites (resets all uninitialized members)</span>
 ./generate_test.sh
@@ -193,7 +193,7 @@ make check
 make check-all
 </code></pre>
 <h2 id="supported-member-types">Supported Member Types</h2>
-<p>All primitive types, pointers, references, and enums are detected <strong>regardless of qualifiers</strong> — <code>const</code>, <code>volatile</code>, <code>const volatile</code> — on the type, the pointer, or both. Fixed-width integer types from <code>&lt;cstdint&gt;</code> are detected too.</p>
+<p>All primitive types, pointers, references, and enums are detected <strong>regardless of qualifiers</strong> (<code>const</code>, <code>volatile</code>, <code>const volatile</code>) on the type, the pointer, or both. Fixed-width integer types from <code>&lt;cstdint&gt;</code> are detected too.</p>
 <h3 id="detected">Detected</h3>
 <table>
 <thead>
@@ -268,7 +268,7 @@ make check-all
 </table>
 <p><strong>Note on <code>const</code> and reference members:</strong> <code>const T</code> and <code>T&amp;</code>/<code>const T&amp;</code> members are compiler-mandated in the initializer list. In-class initialization works for <code>const T</code> in C++11 (<code>const int a_ = 0</code>) but not for references (they need a binding target). cppcheck flags them when missing; references are skipped by the auto-fixer.</p>
 <h3 id="not-detected">NOT detected</h3>
-<p>Types with their own default constructor — cppcheck considers them "initialized" even if forgotten:</p>
+<p>Types with their own default constructor. cppcheck considers them "initialized" even if forgotten:</p>
 <table>
 <thead>
 <tr>
@@ -295,7 +295,7 @@ make check-all
 </tr>
 </tbody>
 </table>
-<p>A forgotten <code>std::string name_</code> in the initializer list will <strong>not</strong> be flagged — the default constructor produces a valid empty state.</p>
+<p>A forgotten <code>std::string name_</code> in the initializer list will <strong>not</strong> be flagged. The default constructor produces a valid empty state.</p>
 <h3 id="primitive-arrays-and-structs">Primitive arrays and structs</h3>
 <table>
 <thead>
@@ -339,7 +339,7 @@ make check-all
     <span class="hljs-type">int</span> k_ = <span class="hljs-number">0</span>;
     <span class="hljs-comment">// const / reference</span>
     <span class="hljs-type">const</span> <span class="hljs-type">int</span> l_ = <span class="hljs-number">0</span>;
-    <span class="hljs-comment">// const double&amp; m_ = ???  — skipped (reference)</span>
+    <span class="hljs-comment">// const double&amp; m_ = ???  -- skipped (reference)</span>
     <span class="hljs-type">const</span> <span class="hljs-type">int</span>* n_ = <span class="hljs-literal">nullptr</span>;
     <span class="hljs-type">const</span> <span class="hljs-type">char</span>* <span class="hljs-type">const</span> o_ = <span class="hljs-literal">nullptr</span>;
     <span class="hljs-type">int</span>* <span class="hljs-type">const</span> p_ = <span class="hljs-literal">nullptr</span>;
@@ -358,7 +358,7 @@ make check-all
     <span class="hljs-type">int</span>* <span class="hljs-keyword">volatile</span> ptr_vol_ = <span class="hljs-literal">nullptr</span>;
     <span class="hljs-type">const</span> <span class="hljs-keyword">volatile</span> <span class="hljs-type">int</span>* cv_ptr_ = <span class="hljs-literal">nullptr</span>;
     <span class="hljs-type">int</span>* <span class="hljs-type">const</span> <span class="hljs-keyword">volatile</span> ptr_cv_ = <span class="hljs-literal">nullptr</span>;
-    <span class="hljs-comment">// RAII — not flagged</span>
+    <span class="hljs-comment">// RAII -- not flagged</span>
     std::string name_;
 };
 </code></pre>
@@ -381,11 +381,11 @@ make check-all
 uninit_test.cpp:11:13: warning: Member variable &#x27;DataHolder::flag_&#x27; is not initialized in the constructor. [uninitMemberVar]
 </code></pre>
 <p>Lines with <code>inconclusive</code> appear when the constructor body is fully empty. <code>--inconclusive</code> must be enabled.</p>
-<h3 id="python-script-—-default-in-class-mode">Python script — default (in-class) mode</h3>
+<h3 id="python-script-default-in-class-mode">Python script: default (in-class) mode</h3>
 <pre><code class="hljs text language-text">Phase 1: scanning for macros...
   found 6 user macro(s)
-Phase 2: running cppcheck (pass 1 — base config)...
-Phase 2: running cppcheck (pass 2 — all macros defined)...
+Phase 2: running cppcheck (pass 1 -- base config)...
+Phase 2: running cppcheck (pass 2 -- all macros defined)...
   pass 2 added 13 error(s) from defined-macros config
 Phase 3: parsing findings...
   15 uninitialized member(s)
@@ -398,14 +398,14 @@ Done. All uninit members have in-class defaults. Backups (*.bak) created.
 </code></pre>
 <p>Verbose (<code>-v</code>) adds: found macro names, cppcheck command lines, member types with guards and defaults:</p>
 <pre><code class="hljs text language-text">    class ServiceConfig:
-      int cache_size_ → 0 [BUILD_PERFORMANCE]
-      const char* host_ → nullptr
-      int legacy_port_ → 0 [USE_LEGACY]
-      int platform_id_ → 0 [(PLATFORM_A || PLATFORM_B)]
-      int retries_ → 0
-      float x_y_ratio_ → 0.0f [FEATURE_X &amp;&amp; FEATURE_Y]
+      int cache_size_ -&gt; 0 [BUILD_PERFORMANCE]
+      const char* host_ -&gt; nullptr
+      int legacy_port_ -&gt; 0 [USE_LEGACY]
+      int platform_id_ -&gt; 0 [(PLATFORM_A || PLATFORM_B)]
+      int retries_ -&gt; 0
+      float x_y_ratio_ -&gt; 0.0f [FEATURE_X &amp;&amp; FEATURE_Y]
 </code></pre>
-<h3 id="python-script-—-init-list-mode---init-list">Python script — init-list mode (<code>--init-list</code>)</h3>
+<h3 id="python-script-init-list-mode---init-list">Python script: init-list mode (<code>--init-list</code>)</h3>
 <pre><code class="hljs text language-text">Phase 5: applying fixes...
   note: ServiceConfig has guarded members that won&#x27;t be auto-fixed
   fixed 4 constructor(s) in uninit_guarded_test.cpp
@@ -431,20 +431,20 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 </ul>
 <h3 id="auto-fix-limitations-cppcheck-fix-uninitpy">Auto-fix limitations (<code>cppcheck-fix-uninit.py</code>)</h3>
 <ul>
-<li><strong>Reference members</strong> (<code>T&amp;</code>, <code>const T&amp;</code>) cannot be auto-fixed — no known binding target</li>
-<li><strong>Header parsing</strong> is regex-based; complex types (nested templates, macros-as-types) fall back to <code>{}</code> (safe)</li>
-<li><strong>Preprocessor macros in member declarations</strong> (<code>STATUS_FLAG flags_;</code>) are not parsed — fall back to <code>{}</code></li>
-<li><strong>Init-list mode</strong> (<code>--init-list</code>) skips <code>#if</code>-guarded members due to colon/comma syntax constraints. In-class mode (default) handles them correctly</li>
+<li><strong>Reference members</strong> (<code>T&amp;</code>, <code>const T&amp;</code>) cannot be auto-fixed. There is no known binding target.</li>
+<li><strong>Header parsing</strong> is regex-based. Complex types (nested templates, macros-as-types) fall back to <code>{}</code>, which is safe.</li>
+<li><strong>Preprocessor macros in member declarations</strong> (<code>STATUS_FLAG flags_;</code>) are not parsed. They fall back to <code>{}</code>.</li>
+<li><strong>Init-list mode</strong> (<code>--init-list</code>) skips <code>#if</code>-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.</li>
 </ul>
 <h2 id="workflow">Workflow</h2>
 <ol>
-<li><strong>Generate test files</strong> — <code>./generate_test.sh</code> (resets both test suites)</li>
-<li><strong>Scan</strong> — <code>./check_uninit_all.sh -I /api *.cpp</code> to see what's uninitialized</li>
-<li><strong>Preview with guards</strong> — <code>./cppcheck-fix-uninit.py -v --report-only *.cpp</code></li>
-<li><strong>Auto-fix</strong> — <code>./cppcheck-fix-uninit.py *.cpp</code> (adds in-class defaults)</li>
-<li><strong>Compile + test</strong> — Verify it compiles and works</li>
-<li><strong>Manual review</strong> — Check <code>*.bak</code> files; handle reference members manually</li>
-<li><strong>Repeat</strong> — <code>./generate_test.sh</code> resets for another round</li>
+<li><strong>Generate test files.</strong> <code>./generate_test.sh</code> resets both test suites.</li>
+<li><strong>Scan.</strong> <code>./check_uninit_all.sh -I /api *.cpp</code> to see what is uninitialized.</li>
+<li><strong>Preview with guards.</strong> <code>./cppcheck-fix-uninit.py -v --report-only *.cpp</code>.</li>
+<li><strong>Auto-fix.</strong> <code>./cppcheck-fix-uninit.py *.cpp</code> adds in-class defaults.</li>
+<li><strong>Compile and test.</strong> Verify it compiles and works.</li>
+<li><strong>Manual review.</strong> Check <code>*.bak</code> files and handle reference members manually.</li>
+<li><strong>Repeat.</strong> <code>./generate_test.sh</code> resets for another round.</li>
 </ol>
 <p>For best results with build flags:</p>
 <pre><code class="hljs bash language-bash">bear -- ./build_script.sh
@@ -472,12 +472,12 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 </tr>
 <tr>
 <td><code>test_elif_guards.py</code></td>
-<td>—</td>
+<td>-</td>
 <td>Unit test for <code>#elif</code>/<code>#else</code> guard chain tracking</td>
 </tr>
 <tr>
 <td><code>test_bear_integration.py</code></td>
-<td>—</td>
+<td>-</td>
 <td>Integration test for <code>-I</code> and <code>--project</code> workflows</td>
 </tr>
 </tbody>
@@ -486,9 +486,9 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <h2 id="dependencies">Dependencies</h2>
 <ul>
 <li><code>cppcheck</code> (2.13+ recommended)</li>
-<li><code>grep</code>, <code>sed</code>, <code>sort</code>, <code>xargs</code> — bash script</li>
-<li><code>python3</code> — Python fixer</li>
-<li><code>bear</code> — optional, for <code>--project</code> support</li>
+<li><code>grep</code>, <code>sed</code>, <code>sort</code>, <code>xargs</code>: bash script</li>
+<li><code>python3</code>: Python fixer</li>
+<li><code>bear</code>: optional, for <code>--project</code> support</li>
 </ul>
 
           </div>

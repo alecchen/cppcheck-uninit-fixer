@@ -1,6 +1,6 @@
 # cppcheck Uninitialized Member Detector
 
-Find and auto-fix uninitialized member variables in C++ classes — handles `#if`/`#ifdef`/`#ifndef`/`#elif` preprocessor guards automatically.
+Find and auto-fix uninitialized member variables in C++ classes with automatic handling of `#if`/`#ifdef`/`#ifndef`/`#elif` preprocessor guards.
 
 ## Quick Start
 
@@ -8,7 +8,7 @@ Find and auto-fix uninitialized member variables in C++ classes — handles `#if
 # 1. Find uninitialized members
 ./check_uninit_all.sh *.cpp
 
-# 2. Auto-fix (in-class defaults = header int a_; → int a_ = 0;)
+# 2. Auto-fix (in-class defaults = header int a_; -> int a_ = 0;)
 ./cppcheck-fix-uninit.py *.cpp
 
 # 3. Verify clean
@@ -24,9 +24,9 @@ Find and auto-fix uninitialized member variables in C++ classes — handles `#if
 
 ## The Problem
 
-cppcheck finds most uninitialized members of primitive types (`int`, `double`, `float`, `bool`, `char*`, etc.), but it has two critical blind spots when the code uses preprocessor conditionals:
+cppcheck finds most uninitialized members of primitive types (`int`, `double`, `float`, `bool`, `char*`, etc.), but it has two blind spots when the code uses preprocessor conditionals:
 
-1. **Single-flag permutations only.** cppcheck's auto-config detection checks each undefined `#if` symbol independently. It **never** tries combinations — so `#if A && B` is never checked in the config where both are active.
+1. **Single-flag permutations only.** cppcheck's auto-config detection checks each undefined `#if` symbol independently. It never tries combinations. So `#if A && B` is never checked in the config where both are active.
 
 2. **Default config limit.** cppcheck checks at most 12 configs by default. Codebases with many feature flags may have relevant configs skipped entirely.
 
@@ -44,7 +44,7 @@ Runs cppcheck with no extra defines, but with the config limit raised to 9999.
 | `#if A` | Yes | Single-permutation config checks A-on |
 | `#ifdef A` | Yes | Same |
 | `#ifndef A` | Yes | Base config has A off |
-| `#if A && !B` | Yes | A-on config has B off → condition true |
+| `#if A && !B` | Yes | A-on config has B off, condition true |
 | `#if A \|\| B` | Yes | A-on config makes it true |
 | `#if A && B` | **No** | No single config has both A and B on |
 
@@ -53,10 +53,10 @@ Scans all source files for macro names (filtering out include guards and comment
 
 | Pattern | Covered? | Why |
 |---|---|---|
-| `#if A && B` | Yes | Both defined → condition true |
+| `#if A && B` | Yes | Both defined, condition true |
 | `#if defined(A) && defined(B)` | Yes | Same |
 | `#if A && B && C` | Yes | All three defined |
-| `#if A && B && !C` | **No** | C is defined → `!C` is false |
+| `#if A && B && !C` | **No** | C is defined, `!C` is false |
 
 ### Compound condition detection
 
@@ -72,7 +72,7 @@ The bash script flags `#if` conditions with 3+ user macros for manual review:
 
 The Python fixer has two modes:
 
-**Default: in-class initializers** — adds `= 0` / `= nullptr` / `= false` directly to the member declaration in the header:
+**Default: in-class initializers.** Adds `= 0` / `= nullptr` / `= false` directly to the member declaration in the header:
 
 ```cpp
 // Before                     // After
@@ -89,7 +89,7 @@ One change covers all constructors. Works correctly with `#if`-guarded members b
 #endif
 ```
 
-**Opt-in: constructor init-list** — adds `: member_(0)` to each constructor in the `.cpp`:
+**Opt-in: constructor init-list.** Adds `: member_(0)` to each constructor in the `.cpp`:
 
 ```bash
 ./cppcheck-fix-uninit.py --init-list *.cpp
@@ -104,7 +104,7 @@ Foo::Foo()
 {}
 ```
 
-Use `--init-list` for projects that prefer explicit per-constructor initialization over in-class defaults. Note that `#if`-guarded members are **skipped** in init-list mode — the C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.
+Use `--init-list` for projects that prefer explicit per-constructor initialization over in-class defaults. `#if`-guarded members are **skipped** in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.
 
 ## Usage
 
@@ -146,9 +146,9 @@ bear -- ./build_script.sh
 
 Creates `.bak` backup files before any modification.
 
-**Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings — cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
+**Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
-**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing — the Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script. Passing `--project=compile_commands.json` resolves includes automatically.
+**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing. The Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script. Passing `--project=compile_commands.json` resolves includes automatically.
 
 ### Test harness
 
@@ -174,7 +174,7 @@ make check-all
 
 ## Supported Member Types
 
-All primitive types, pointers, references, and enums are detected **regardless of qualifiers** — `const`, `volatile`, `const volatile` — on the type, the pointer, or both. Fixed-width integer types from `<cstdint>` are detected too.
+All primitive types, pointers, references, and enums are detected **regardless of qualifiers** (`const`, `volatile`, `const volatile`) on the type, the pointer, or both. Fixed-width integer types from `<cstdint>` are detected too.
 
 ### Detected
 
@@ -197,7 +197,7 @@ All primitive types, pointers, references, and enums are detected **regardless o
 
 ### NOT detected
 
-Types with their own default constructor — cppcheck considers them "initialized" even if forgotten:
+Types with their own default constructor. cppcheck considers them "initialized" even if forgotten:
 
 | Type | Safe default |
 |---|---|
@@ -206,7 +206,7 @@ Types with their own default constructor — cppcheck considers them "initialize
 | `std::optional<T>`, `std::variant<T...>` | `{}` (nullopt / first alt) |
 | Any class/struct with a default ctor | cppcheck trusts it |
 
-A forgotten `std::string name_` in the initializer list will **not** be flagged — the default constructor produces a valid empty state.
+A forgotten `std::string name_` in the initializer list will **not** be flagged. The default constructor produces a valid empty state.
 
 ### Primitive arrays and structs
 
@@ -235,7 +235,7 @@ class Foo {
     int k_ = 0;
     // const / reference
     const int l_ = 0;
-    // const double& m_ = ???  — skipped (reference)
+    // const double& m_ = ???  -- skipped (reference)
     const int* n_ = nullptr;
     const char* const o_ = nullptr;
     int* const p_ = nullptr;
@@ -254,7 +254,7 @@ class Foo {
     int* volatile ptr_vol_ = nullptr;
     const volatile int* cv_ptr_ = nullptr;
     int* const volatile ptr_cv_ = nullptr;
-    // RAII — not flagged
+    // RAII -- not flagged
     std::string name_;
 };
 ```
@@ -287,13 +287,13 @@ uninit_test.cpp:11:13: warning: Member variable 'DataHolder::flag_' is not initi
 
 Lines with `inconclusive` appear when the constructor body is fully empty. `--inconclusive` must be enabled.
 
-### Python script — default (in-class) mode
+### Python script: default (in-class) mode
 
 ```text
 Phase 1: scanning for macros...
   found 6 user macro(s)
-Phase 2: running cppcheck (pass 1 — base config)...
-Phase 2: running cppcheck (pass 2 — all macros defined)...
+Phase 2: running cppcheck (pass 1 -- base config)...
+Phase 2: running cppcheck (pass 2 -- all macros defined)...
   pass 2 added 13 error(s) from defined-macros config
 Phase 3: parsing findings...
   15 uninitialized member(s)
@@ -309,15 +309,15 @@ Verbose (`-v`) adds: found macro names, cppcheck command lines, member types wit
 
 ```text
     class ServiceConfig:
-      int cache_size_ → 0 [BUILD_PERFORMANCE]
-      const char* host_ → nullptr
-      int legacy_port_ → 0 [USE_LEGACY]
-      int platform_id_ → 0 [(PLATFORM_A || PLATFORM_B)]
-      int retries_ → 0
-      float x_y_ratio_ → 0.0f [FEATURE_X && FEATURE_Y]
+      int cache_size_ -> 0 [BUILD_PERFORMANCE]
+      const char* host_ -> nullptr
+      int legacy_port_ -> 0 [USE_LEGACY]
+      int platform_id_ -> 0 [(PLATFORM_A || PLATFORM_B)]
+      int retries_ -> 0
+      float x_y_ratio_ -> 0.0f [FEATURE_X && FEATURE_Y]
 ```
 
-### Python script — init-list mode (`--init-list`)
+### Python script: init-list mode (`--init-list`)
 
 ```text
 Phase 5: applying fixes...
@@ -354,20 +354,20 @@ cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
 
 ### Auto-fix limitations (`cppcheck-fix-uninit.py`)
 
-- **Reference members** (`T&`, `const T&`) cannot be auto-fixed — no known binding target
-- **Header parsing** is regex-based; complex types (nested templates, macros-as-types) fall back to `{}` (safe)
-- **Preprocessor macros in member declarations** (`STATUS_FLAG flags_;`) are not parsed — fall back to `{}`
-- **Init-list mode** (`--init-list`) skips `#if`-guarded members due to colon/comma syntax constraints. In-class mode (default) handles them correctly
+- **Reference members** (`T&`, `const T&`) cannot be auto-fixed. There is no known binding target.
+- **Header parsing** is regex-based. Complex types (nested templates, macros-as-types) fall back to `{}`, which is safe.
+- **Preprocessor macros in member declarations** (`STATUS_FLAG flags_;`) are not parsed. They fall back to `{}`.
+- **Init-list mode** (`--init-list`) skips `#if`-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.
 
 ## Workflow
 
-1. **Generate test files** — `./generate_test.sh` (resets both test suites)
-2. **Scan** — `./check_uninit_all.sh -I /api *.cpp` to see what's uninitialized
-3. **Preview with guards** — `./cppcheck-fix-uninit.py -v --report-only *.cpp`
-4. **Auto-fix** — `./cppcheck-fix-uninit.py *.cpp` (adds in-class defaults)
-5. **Compile + test** — Verify it compiles and works
-6. **Manual review** — Check `*.bak` files; handle reference members manually
-7. **Repeat** — `./generate_test.sh` resets for another round
+1. **Generate test files.** `./generate_test.sh` resets both test suites.
+2. **Scan.** `./check_uninit_all.sh -I /api *.cpp` to see what is uninitialized.
+3. **Preview with guards.** `./cppcheck-fix-uninit.py -v --report-only *.cpp`.
+4. **Auto-fix.** `./cppcheck-fix-uninit.py *.cpp` adds in-class defaults.
+5. **Compile and test.** Verify it compiles and works.
+6. **Manual review.** Check `*.bak` files and handle reference members manually.
+7. **Repeat.** `./generate_test.sh` resets for another round.
 
 For best results with build flags:
 
@@ -381,15 +381,15 @@ bear -- ./build_script.sh
 | File | Uninit members | Features |
 |---|---|---|
 | `uninit_test.h/cpp` | 57 | All primitive/ptr/ref/volatile types, no guards |
-| `uninit_guarded_test.h/cpp` | 15 | 6 feature flags, compound `&&`/`\|\|`/`!` guards |
-| `test_elif_guards.py` | — | Unit test for `#elif`/`#else` guard chain tracking |
-| `test_bear_integration.py` | — | Integration test for `-I` and `--project` workflows |
+| `uninit_guarded_test.h/cpp` | 15 | 6 feature flags, compound `&&`/`||`/`!` guards |
+| `test_elif_guards.py` | - | Unit test for `#elif`/`#else` guard chain tracking |
+| `test_bear_integration.py` | - | Integration test for `-I` and `--project` workflows |
 
 Regenerate test files with `./generate_test.sh`. Run `make check` for quick checks or `make check-all` for full suite.
 
 ## Dependencies
 
 - `cppcheck` (2.13+ recommended)
-- `grep`, `sed`, `sort`, `xargs` — bash script
-- `python3` — Python fixer
-- `bear` — optional, for `--project` support
+- `grep`, `sed`, `sort`, `xargs`: bash script
+- `python3`: Python fixer
+- `bear`: optional, for `--project` support
