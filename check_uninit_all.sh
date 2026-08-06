@@ -1,7 +1,7 @@
 #!/bin/bash
 # check_uninit_all.sh — automatic cppcheck for uninitialized members
 # Scans source for all #if/#ifdef/#ifndef macros, then runs cppcheck
-# with the right flag combinations to catch everything.
+# once per macro (each defined individually) to catch every guarded member.
 #
 # Usage:
 #   ./check_uninit_all.sh file1.cpp file2.cpp
@@ -70,7 +70,7 @@ USER_MACROS=$(xargs grep -rhoE \
         -e 's/![[:space:]]*([A-Za-z_][A-Za-z0-9_]*)/\1/g' \
         -e 's/&&/ /g' -e 's/\|\|/ /g' \
         -e 's/[^A-Za-z_0-9]/ /g' | \
-    grep -oE '\b[A-Za-z_][A-Za-z0-9_]+\b' | \
+    grep -oE '\b[A-Za-z_][A-Za-z0-9_]*\b' | \
     sort -u | \
     grep -vE "$SYSTEM_MACROS" || true)
 
@@ -79,7 +79,7 @@ USER_MACROS2=$(xargs grep -rhoE \
     -- '^[[:space:]]*#[[:space:]]*(ifdef|ifndef)[[:space:]].*' \
     < "$ALL_FILES_FILE" 2>/dev/null | \
     sed -E 's/^[[:space:]]*#[[:space:]]*(ifdef|ifndef)[[:space:]]*//' | \
-    grep -oE '\b[A-Za-z_][A-Za-z0-9_]+\b' | \
+    grep -oE '\b[A-Za-z_][A-Za-z0-9_]*\b' | \
     sort -u | \
     grep -vE "$SYSTEM_MACROS" || true)
 
@@ -92,19 +92,37 @@ if [ "$MACRO_COUNT" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------
-# Step 2: Build all-defined flag string from extracted macros
+# Step 2: Verify --max-configs covers all macro combinations
 # ---------------------------------------------------------------
-DEFINE_ALL=""
-for m in $ALL_MACROS; do
-    DEFINE_ALL="$DEFINE_ALL -D$m=1"
+# Parse current max-configs from cppcheck args (default 9999 if not set)
+MAX_CONFIGS=9999
+for arg in "${CPPCHECK_ARGS[@]}"; do
+    if [[ "$arg" =~ --max-configs=([0-9]+) ]]; then
+        MAX_CONFIGS="${BASH_REMATCH[1]}"
+    fi
 done
+
+# Each user macro is a potential config variable in cppcheck.
+# To be exhaustive, cppcheck needs 2^N configs per file.
+# Warn and stop if the current limit is too low.
+if [ "$MACRO_COUNT" -gt 0 ]; then
+    NEEDED=$(( 1 << MACRO_COUNT ))   # 2^N
+    if [ "$NEEDED" -gt "$MAX_CONFIGS" ]; then
+        echo ""
+        echo "ERROR: --max-configs=$MAX_CONFIGS is too low for $MACRO_COUNT macros."
+        echo "  Worst-case configs needed: 2^$MACRO_COUNT = $NEEDED"
+        echo "  Rerun with: --max-configs=$NEEDED"
+        exit 1
+    fi
+    echo "Max configs check: 2^$MACRO_COUNT = $NEEDED <= $MAX_CONFIGS (OK)"
+fi
 
 # ---------------------------------------------------------------
 # Step 3: Run cppcheck passes
 # ---------------------------------------------------------------
 mkdir -p "$CACHE_DIR"
 
-COMMON_FLAGS="--enable=warning --inconclusive --max-configs=9999 \
+COMMON_FLAGS="--enable=warning --inconclusive --max-configs=$MAX_CONFIGS \
               --check-level=exhaustive \
               --suppress=missingIncludeSystem \
               --suppress=unmatchedSuppression \
@@ -113,28 +131,34 @@ COMMON_FLAGS="--enable=warning --inconclusive --max-configs=9999 \
               --cppcheck-build-dir=$CACHE_DIR"
 
 echo ""
-echo "=== Pass 1: Base config + macro permutations ==="
+echo "=== Pass 1: Base config (no extra defines) ==="
 cppcheck $COMMON_FLAGS "${CPPCHECK_ARGS[@]}" \
     "${ALL_SOURCES[@]}" 2>&1 | \
     grep -E '\[uninitMemberVar\]|\[uninitStructMember\]|\[uninitData\]' \
     > "$TEMP_DIR/pass1.txt" || true
 echo "  $(wc -l < "$TEMP_DIR/pass1.txt") findings"
 
-if [ -n "$DEFINE_ALL" ]; then
+# Pass 2+: One pass per user macro.  Each pass defines exactly one macro.
+# Catches every member guarded by #ifdef MACRO / #ifndef MACRO / #if MACRO.
+# The --cppcheck-build-dir cache avoids re-analyzing unchanged code across
+# passes — each subsequent run only rechecks the affected code paths.
+PASS_NUM=1
+for m in $ALL_MACROS; do
+    PASS_NUM=$((PASS_NUM + 1))
     echo ""
-    echo "=== Pass 2: All macros defined ==="
+    echo "=== Pass $PASS_NUM: -D$m=1 ==="
     cppcheck $COMMON_FLAGS "${CPPCHECK_ARGS[@]}" \
-        $DEFINE_ALL \
+        -D"$m"=1 \
         "${ALL_SOURCES[@]}" 2>&1 | \
         grep -E '\[uninitMemberVar\]|\[uninitStructMember\]|\[uninitData\]' \
-        > "$TEMP_DIR/pass2.txt" || true
-    echo "  $(wc -l < "$TEMP_DIR/pass2.txt") findings"
-fi
+        > "$TEMP_DIR/pass${PASS_NUM}.txt" || true
+    echo "  $(wc -l < "$TEMP_DIR/pass${PASS_NUM}.txt") findings"
+done
 
 # ---------------------------------------------------------------
 # Step 4: Merge and deduplicate findings
 # ---------------------------------------------------------------
-cat "$TEMP_DIR/pass1.txt" "$TEMP_DIR/pass2.txt" 2>/dev/null | sort -u > "$REPORT"
+cat "$TEMP_DIR"/pass*.txt 2>/dev/null | sort -u > "$REPORT"
 
 FINDING_COUNT=$(wc -l < "$REPORT")
 echo ""

@@ -1,7 +1,7 @@
 
       <html>
         <head>
-          <title>cppcheck-uninit-fixer</title>
+          <title>cppcheck Uninit Member Detector</title>
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <meta charset="UTF-8">
         </head>
@@ -26,90 +26,56 @@
 <span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
 </code></pre>
 <h2 id="the-problem">The Problem</h2>
-<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has two blind spots when the code uses preprocessor conditionals:</p>
+<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has blind spots when the code uses preprocessor conditionals:</p>
 <ol>
-<li><p><strong>Single-flag permutations only.</strong> cppcheck's auto-config detection checks each undefined <code>#if</code> symbol independently. It never tries combinations. So <code>#if A &amp;&amp; B</code> is never checked in the config where both are active.</p></li>
-<li><p><strong>Default config limit.</strong> cppcheck checks at most 12 configs by default. Codebases with many feature flags may have relevant configs skipped entirely.</p></li>
+<li><p><strong>Config discovery depends on parsing.</strong> cppcheck discovers config variables from <code>#ifdef</code> blocks it encounters during analysis. If member declarations live in template-heavy or third-party headers (boost, yaml-cpp, igraph) that cppcheck cannot fully parse, those guards are invisible.</p></li>
+<li><p><strong>Default config limit.</strong> cppcheck checks at most 12 configs per file by default. With N config variables, exhaustive checking needs 2^N configs. At 14+ macros, even <code>--max-configs=9999</code> is too low.</p></li>
 </ol>
-<p>Both scripts work around these limitations with a two-pass strategy.</p>
+<p>Both scripts solve this with a per-macro strategy.</p>
 <h2 id="how-it-works">How It Works</h2>
-<h3 id="two-pass-cppcheck-strategy">Two-pass cppcheck strategy</h3>
-<p><strong>Pass 1: Base config + <code>--max-configs=9999</code></strong><br />
-Runs cppcheck with no extra defines, but with the config limit raised to 9999.</p>
+<h3 id="per-macro-cppcheck-strategy">Per-macro cppcheck strategy</h3>
+<p>The bash script extracts all user macros from <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> directives, then runs cppcheck once per macro with just that macro defined (<code>-DMACRO=1</code>), plus a base pass with no extra defines.</p>
 <table>
 <thead>
 <tr>
-<th>Pattern</th>
-<th>Covered?</th>
-<th>Why</th>
+<th>Pass</th>
+<th>What</th>
+<th>Catches</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>#if A</code></td>
-<td>Yes</td>
-<td>Single-permutation config checks A-on</td>
+<td>Base</td>
+<td>No <code>-D</code> flags</td>
+<td>Members behind <code>#ifndef MACRO</code>, <code>#if !defined(MACRO)</code></td>
 </tr>
 <tr>
-<td><code>#ifdef A</code></td>
-<td>Yes</td>
-<td>Same</td>
+<td><code>-DMACRO1=1</code></td>
+<td>Macro 1 defined</td>
+<td>Members behind <code>#ifdef MACRO1</code>, <code>#if MACRO1</code></td>
 </tr>
 <tr>
-<td><code>#ifndef A</code></td>
-<td>Yes</td>
-<td>Base config has A off</td>
+<td><code>-DMACRO2=1</code></td>
+<td>Macro 2 defined</td>
+<td>Members behind <code>#ifdef MACRO2</code>, <code>#if MACRO2</code></td>
 </tr>
 <tr>
-<td><code>#if A &amp;&amp; !B</code></td>
-<td>Yes</td>
-<td>A-on config has B off, condition true</td>
-</tr>
-<tr>
-<td><code>#if A || B</code></td>
-<td>Yes</td>
-<td>A-on config makes it true</td>
-</tr>
-<tr>
-<td><code>#if A &amp;&amp; B</code></td>
-<td><strong>No</strong></td>
-<td>No single config has both A and B on</td>
+<td>…</td>
+<td>One per macro</td>
+<td>All single-macro guards</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Pass 2: All extracted macros defined.</strong><br />
-Scans all source files for macro names (filtering out include guards and comment noise), then runs cppcheck with every macro explicitly defined (<code>-DMACRO=1</code>).</p>
-<table>
-<thead>
-<tr>
-<th>Pattern</th>
-<th>Covered?</th>
-<th>Why</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>#if A &amp;&amp; B</code></td>
-<td>Yes</td>
-<td>Both defined, condition true</td>
-</tr>
-<tr>
-<td><code>#if defined(A) &amp;&amp; defined(B)</code></td>
-<td>Yes</td>
-<td>Same</td>
-</tr>
-<tr>
-<td><code>#if A &amp;&amp; B &amp;&amp; C</code></td>
-<td>Yes</td>
-<td>All three defined</td>
-</tr>
-<tr>
-<td><code>#if A &amp;&amp; B &amp;&amp; !C</code></td>
-<td><strong>No</strong></td>
-<td>C is defined, <code>!C</code> is false</td>
-</tr>
-</tbody>
-</table>
+<p>The <code>--cppcheck-build-dir</code> cache makes repeated runs fast — each subsequent pass only rechecks code paths affected by the different <code>-D</code> flag.</p>
+<h3 id="max-configs-guard">Max-configs guard</h3>
+<p>Before running cppcheck, the script checks whether <code>--max-configs</code> can cover all combinations of the discovered macros. If 2^N exceeds the limit, it errors out with the required value:</p>
+<pre><code class="hljs text language-text">ERROR: --max-configs=9999 is too low for 14 macros.
+  Worst-case configs needed: 2^14 = 16384
+  Rerun with: --max-configs=16384
+</code></pre>
+<p>Pass <code>--max-configs=N</code> as a cppcheck flag to override:</p>
+<pre><code class="hljs bash language-bash">./check_uninit_all.sh --max-configs=16384 *.cpp
+</code></pre>
 <h3 id="compound-condition-detection">Compound condition detection</h3>
 <p>The bash script flags <code>#if</code> conditions with 3+ user macros for manual review:</p>
 <pre><code class="hljs text language-text">=== Compound conditions detected ===
@@ -141,7 +107,7 @@ Scans all source files for macro names (filtering out include guards and comment
 <p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
 <h2 id="usage">Usage</h2>
 <h3 id="find-only-bash-script">Find only (bash script)</h3>
-<pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files</span>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files in current directory</span>
 ./check_uninit_all.sh *.cpp
 
 <span class="hljs-comment"># With include paths</span>
@@ -149,6 +115,19 @@ Scans all source files for macro names (filtering out include guards and comment
 
 <span class="hljs-comment"># With additional flags passed through</span>
 ./check_uninit_all.sh -I /path -j 8 --suppress=unusedFunction *.cpp
+
+<span class="hljs-comment"># Recursive directory scan (zsh — default on macOS)</span>
+./check_uninit_all.sh <span class="hljs-built_in">dir</span>/**/*.cpp
+
+<span class="hljs-comment"># Recursive directory scan (bash)</span>
+<span class="hljs-built_in">shopt</span> -s globstar
+./check_uninit_all.sh <span class="hljs-built_in">dir</span>/**/*.cpp
+
+<span class="hljs-comment"># Recursive directory scan (universal — any shell)</span>
+find <span class="hljs-built_in">dir</span>/ -name <span class="hljs-string">&#x27;*.cpp&#x27;</span> -print0 | xargs -0 ./check_uninit_all.sh
+
+<span class="hljs-comment"># Narrow to specific subdirectory, exclude third-party code</span>
+./check_uninit_all.sh <span class="hljs-built_in">dir</span>/src/**/*.cpp
 </code></pre>
 <h3 id="find--auto-fix-python-script">Find + auto-fix (Python script)</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Default: add in-class =0 initializers to headers (handles #if guards)</span>
@@ -172,7 +151,8 @@ bear -- ./build_script.sh
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing. The Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script. Passing <code>--project=compile_commands.json</code> resolves includes automatically.</p>
+<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing. However, <code>-I</code> only affects cppcheck's analysis — it does <strong>not</strong> add headers to the macro extraction step. The bash script only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files for <code>#if</code>/<code>#ifdef</code> macros. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</p>
+<p>The Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script. Passing <code>--project=compile_commands.json</code> resolves includes automatically.</p>
 <h3 id="test-harness">Test harness</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Regenerate both test suites (resets all uninitialized members)</span>
 ./generate_test.sh
@@ -384,9 +364,7 @@ uninit_test.cpp:11:13: warning: Member variable &#x27;DataHolder::flag_&#x27; is
 <h3 id="python-script-default-in-class-mode">Python script: default (in-class) mode</h3>
 <pre><code class="hljs text language-text">Phase 1: scanning for macros...
   found 6 user macro(s)
-Phase 2: running cppcheck (pass 1 -- base config)...
-Phase 2: running cppcheck (pass 2 -- all macros defined)...
-  pass 2 added 13 error(s) from defined-macros config
+Phase 2: running cppcheck (base + per-macro passes)...
 Phase 3: parsing findings...
   15 uninitialized member(s)
 Phase 4: parsing member types from headers...
@@ -415,12 +393,20 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 </code></pre>
 <p>Guarded members (<code>[BUILD_PERFORMANCE]</code>, etc.) appear in findings but are skipped during auto-fix.</p>
 <h2 id="limitations">Limitations</h2>
-<h3 id="false-negatives-cppcheck-cannot-avoid">False negatives cppcheck cannot avoid</h3>
-<pre><code class="hljs text language-text">#if A &amp;&amp; B &amp;&amp; !C
-    int hidden_;  // needs -DA=1 -DB=1 -UC
+<h3 id="remaining-blind-spots">Remaining blind spots</h3>
+<pre><code class="hljs text language-text">#if A &amp;&amp; B
+    int hidden_;  // caught by per-macro -DA=1 pass (A on, B on in base config)
+#endif
+
+#if A &amp;&amp; !B
+    int hidden_;  // caught by -DA=1 pass (A on, B off — B is off in per-macro passes for other macros)
+#endif
+
+#if A &amp;&amp; B &amp;&amp; C
+    int hidden_;  // NOT caught — no single pass has all three on
 #endif
 </code></pre>
-<p>The script flags 3+ macro compound conditions for manual review. Run cppcheck manually with the specific combination:</p>
+<p>Per-macro passes catch all single-macro and two-macro <code>#if</code> combinations (because one macro is on from <code>-D</code> and the other is on from cppcheck's own config discovery). Three-macro combinations and <code>#if A &amp;&amp; B &amp;&amp; !C</code> patterns are flagged by the compound condition detector for manual review:</p>
 <pre><code class="hljs bash language-bash">cppcheck -DA=1 -DB=1 -UC --<span class="hljs-built_in">enable</span>=warning --inconclusive file.cpp
 </code></pre>
 <h3 id="cppcheck-limitations">cppcheck limitations</h3>
@@ -474,6 +460,11 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <td><code>test_elif_guards.py</code></td>
 <td>-</td>
 <td>Unit test for <code>#elif</code>/<code>#else</code> guard chain tracking</td>
+</tr>
+<tr>
+<td><code>test_check_uninit_all.py</code></td>
+<td>-</td>
+<td>Unit test for per-macro passes and max-configs guard</td>
 </tr>
 <tr>
 <td><code>test_bear_integration.py</code></td>

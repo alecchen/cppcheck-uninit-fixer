@@ -1,4 +1,4 @@
-.PHONY: clean distclean archive check check-all
+.PHONY: clean distclean archive check check-all html
 
 # Remove temp/cache/backup files from cppcheck runs
 clean:
@@ -12,9 +12,15 @@ distclean: clean
 archive:
 	git archive -o cppcheck-uninit-fixer.tar.gz --prefix=cppcheck-uninit-fixer/ HEAD '*.sh' '*.py' README.md README.html Makefile
 
-# Quick check: guard chain tracking
+# Convert README.md → README.html (GitHub style, code highlighting)
+html:
+	rm -f README.html
+	cd markdown-to-html-github-style && node convert.js "cppcheck Uninit Member Detector" "" ../README.md
+
+# Quick check: guard chain tracking + shell script tests
 check:
 	python3 test_elif_guards.py
+	python3 test_check_uninit_all.py
 
 # Full checks: guard tracking + -I/--project integration
 check-all: check

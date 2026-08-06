@@ -24,39 +24,44 @@ Find and auto-fix uninitialized member variables in C++ classes with automatic h
 
 ## The Problem
 
-cppcheck finds most uninitialized members of primitive types (`int`, `double`, `float`, `bool`, `char*`, etc.), but it has two blind spots when the code uses preprocessor conditionals:
+cppcheck finds most uninitialized members of primitive types (`int`, `double`, `float`, `bool`, `char*`, etc.), but it has blind spots when the code uses preprocessor conditionals:
 
-1. **Single-flag permutations only.** cppcheck's auto-config detection checks each undefined `#if` symbol independently. It never tries combinations. So `#if A && B` is never checked in the config where both are active.
+1. **Config discovery depends on parsing.** cppcheck discovers config variables from `#ifdef` blocks it encounters during analysis. If member declarations live in template-heavy or third-party headers (boost, yaml-cpp, igraph) that cppcheck cannot fully parse, those guards are invisible.
 
-2. **Default config limit.** cppcheck checks at most 12 configs by default. Codebases with many feature flags may have relevant configs skipped entirely.
+2. **Default config limit.** cppcheck checks at most 12 configs per file by default. With N config variables, exhaustive checking needs 2^N configs. At 14+ macros, even `--max-configs=9999` is too low.
 
-Both scripts work around these limitations with a two-pass strategy.
+Both scripts solve this with a per-macro strategy.
 
 ## How It Works
 
-### Two-pass cppcheck strategy
+### Per-macro cppcheck strategy
 
-**Pass 1: Base config + `--max-configs=9999`**
-Runs cppcheck with no extra defines, but with the config limit raised to 9999.
+The bash script extracts all user macros from `#if`/`#ifdef`/`#ifndef`/`#elif` directives, then runs cppcheck once per macro with just that macro defined (`-DMACRO=1`), plus a base pass with no extra defines.
 
-| Pattern | Covered? | Why |
+| Pass | What | Catches |
 |---|---|---|
-| `#if A` | Yes | Single-permutation config checks A-on |
-| `#ifdef A` | Yes | Same |
-| `#ifndef A` | Yes | Base config has A off |
-| `#if A && !B` | Yes | A-on config has B off, condition true |
-| `#if A \|\| B` | Yes | A-on config makes it true |
-| `#if A && B` | **No** | No single config has both A and B on |
+| Base | No `-D` flags | Members behind `#ifndef MACRO`, `#if !defined(MACRO)` |
+| `-DMACRO1=1` | Macro 1 defined | Members behind `#ifdef MACRO1`, `#if MACRO1` |
+| `-DMACRO2=1` | Macro 2 defined | Members behind `#ifdef MACRO2`, `#if MACRO2` |
+| ... | One per macro | All single-macro guards |
 
-**Pass 2: All extracted macros defined.**
-Scans all source files for macro names (filtering out include guards and comment noise), then runs cppcheck with every macro explicitly defined (`-DMACRO=1`).
+The `--cppcheck-build-dir` cache makes repeated runs fast — each subsequent pass only rechecks code paths affected by the different `-D` flag.
 
-| Pattern | Covered? | Why |
-|---|---|---|
-| `#if A && B` | Yes | Both defined, condition true |
-| `#if defined(A) && defined(B)` | Yes | Same |
-| `#if A && B && C` | Yes | All three defined |
-| `#if A && B && !C` | **No** | C is defined, `!C` is false |
+### Max-configs guard
+
+Before running cppcheck, the script checks whether `--max-configs` can cover all combinations of the discovered macros. If 2^N exceeds the limit, it errors out with the required value:
+
+```text
+ERROR: --max-configs=9999 is too low for 14 macros.
+  Worst-case configs needed: 2^14 = 16384
+  Rerun with: --max-configs=16384
+```
+
+Pass `--max-configs=N` as a cppcheck flag to override:
+
+```bash
+./check_uninit_all.sh --max-configs=16384 *.cpp
+```
 
 ### Compound condition detection
 
@@ -111,7 +116,7 @@ Use `--init-list` for projects that prefer explicit per-constructor initializati
 ### Find only (bash script)
 
 ```bash
-# Scan .cpp files
+# Scan .cpp files in current directory
 ./check_uninit_all.sh *.cpp
 
 # With include paths
@@ -119,6 +124,19 @@ Use `--init-list` for projects that prefer explicit per-constructor initializati
 
 # With additional flags passed through
 ./check_uninit_all.sh -I /path -j 8 --suppress=unusedFunction *.cpp
+
+# Recursive directory scan (zsh — default on macOS)
+./check_uninit_all.sh dir/**/*.cpp
+
+# Recursive directory scan (bash)
+shopt -s globstar
+./check_uninit_all.sh dir/**/*.cpp
+
+# Recursive directory scan (universal — any shell)
+find dir/ -name '*.cpp' -print0 | xargs -0 ./check_uninit_all.sh
+
+# Narrow to specific subdirectory, exclude third-party code
+./check_uninit_all.sh dir/src/**/*.cpp
 ```
 
 ### Find + auto-fix (Python script)
@@ -148,7 +166,9 @@ Creates `.bak` backup files before any modification.
 
 **Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
-**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing. The Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script. Passing `--project=compile_commands.json` resolves includes automatically.
+**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing. However, `-I` only affects cppcheck's analysis — it does **not** add headers to the macro extraction step. The bash script only scans `*.h`/`*.hpp` files co-located with the source files for `#if`/`#ifdef` macros. If your guarded members are in headers under an `-I` directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.
+
+The Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script. Passing `--project=compile_commands.json` resolves includes automatically.
 
 ### Test harness
 
@@ -292,9 +312,7 @@ Lines with `inconclusive` appear when the constructor body is fully empty. `--in
 ```text
 Phase 1: scanning for macros...
   found 6 user macro(s)
-Phase 2: running cppcheck (pass 1 -- base config)...
-Phase 2: running cppcheck (pass 2 -- all macros defined)...
-  pass 2 added 13 error(s) from defined-macros config
+Phase 2: running cppcheck (base + per-macro passes)...
 Phase 3: parsing findings...
   15 uninitialized member(s)
 Phase 4: parsing member types from headers...
@@ -332,15 +350,23 @@ Guarded members (`[BUILD_PERFORMANCE]`, etc.) appear in findings but are skipped
 
 ## Limitations
 
-### False negatives cppcheck cannot avoid
+### Remaining blind spots
 
 ```text
-#if A && B && !C
-    int hidden_;  // needs -DA=1 -DB=1 -UC
+#if A && B
+    int hidden_;  // caught by per-macro -DA=1 pass (A on, B on in base config)
+#endif
+
+#if A && !B
+    int hidden_;  // caught by -DA=1 pass (A on, B off — B is off in per-macro passes for other macros)
+#endif
+
+#if A && B && C
+    int hidden_;  // NOT caught — no single pass has all three on
 #endif
 ```
 
-The script flags 3+ macro compound conditions for manual review. Run cppcheck manually with the specific combination:
+Per-macro passes catch all single-macro and two-macro `#if` combinations (because one macro is on from `-D` and the other is on from cppcheck's own config discovery). Three-macro combinations and `#if A && B && !C` patterns are flagged by the compound condition detector for manual review:
 
 ```bash
 cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
@@ -383,6 +409,7 @@ bear -- ./build_script.sh
 | `uninit_test.h/cpp` | 57 | All primitive/ptr/ref/volatile types, no guards |
 | `uninit_guarded_test.h/cpp` | 15 | 6 feature flags, compound `&&`/`||`/`!` guards |
 | `test_elif_guards.py` | - | Unit test for `#elif`/`#else` guard chain tracking |
+| `test_check_uninit_all.py` | - | Unit test for per-macro passes and max-configs guard |
 | `test_bear_integration.py` | - | Integration test for `-I` and `--project` workflows |
 
 Regenerate test files with `./generate_test.sh`. Run `make check` for quick checks or `make check-all` for full suite.
