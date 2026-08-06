@@ -17,10 +17,11 @@ html:
 	rm -f README.html
 	cd markdown-to-html-github-style && node convert.js "cppcheck Uninit Member Detector" "" ../README.md
 
-# Quick check: guard chain tracking + shell script tests
+# Quick check: guard chain tracking + shell script tests + Python fixer tests
 check:
 	python3 test_elif_guards.py
 	python3 test_check_uninit_all.py
+	python3 test_fix_uninit.py
 
 # Full checks: guard tracking + -I/--project integration
 check-all: check

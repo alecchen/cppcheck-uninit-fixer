@@ -5,17 +5,14 @@ Find and auto-fix uninitialized member variables in C++ classes with automatic h
 ## Quick Start
 
 ```bash
-# 1. Find uninitialized members
+# Find only (bash script)
 ./check_uninit_all.sh *.cpp
 
-# 2. Auto-fix (in-class defaults = header int a_; -> int a_ = 0;)
-./cppcheck-fix-uninit.py *.cpp
+# Find + auto-fix in one step (Python script)
+python3 cppcheck-fix-uninit.py *.cpp
 
-# 3. Verify clean
-./cppcheck-fix-uninit.py --report-only *.cpp
-
-# Or all at once: find + fix + verify
-./cppcheck-fix-uninit.py *.cpp && ./cppcheck-fix-uninit.py --report-only *.cpp
+# Preview without modifying
+python3 cppcheck-fix-uninit.py --report-only *.cpp
 
 # For #if-heavy code, in-class mode handles guards automatically (default).
 # For constructor init-lists instead: add --init-list
@@ -166,7 +163,10 @@ Creates `.bak` backup files before any modification.
 
 **Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
-**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing. However, `-I` only affects cppcheck's analysis — it does **not** add headers to the macro extraction step. The bash script only scans `*.h`/`*.hpp` files co-located with the source files for `#if`/`#ifdef` macros. If your guarded members are in headers under an `-I` directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.
+**Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing.
+
+- **Bash script (`check_uninit_all.sh`):** `-I` only affects cppcheck's analysis. Macro extraction only scans `*.h`/`*.hpp` files co-located with the source files. If your guarded members are in headers under an `-I` directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.
+- **Python fixer (`cppcheck-fix-uninit.py`):** `-I` affects both cppcheck's analysis AND macro extraction, since `find_headers()` scans `-I` directories for macros. This means macros from separate include directories DO appear in the per-macro pass list.
 
 The Python fixer needs `-I` to find the headers for type parsing and in-class default insertion. Without `-I`, type info will not be found and the fixer falls back to `{}` values. Use the same `-I` flags for the Python fixer as you use for the bash script. Passing `--project=compile_commands.json` resolves includes automatically.
 
@@ -388,12 +388,11 @@ cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
 ## Workflow
 
 1. **Generate test files.** `./generate_test.sh` resets both test suites.
-2. **Scan.** `./check_uninit_all.sh -I /api *.cpp` to see what is uninitialized.
-3. **Preview with guards.** `./cppcheck-fix-uninit.py -v --report-only *.cpp`.
-4. **Auto-fix.** `./cppcheck-fix-uninit.py *.cpp` adds in-class defaults.
-5. **Compile and test.** Verify it compiles and works.
-6. **Manual review.** Check `*.bak` files and handle reference members manually.
-7. **Repeat.** `./generate_test.sh` resets for another round.
+2. **Find.** `./check_uninit_all.sh -I /api *.cpp` to see what is uninitialized, or `python3 cppcheck-fix-uninit.py -v --report-only *.cpp` for a preview with guard info.
+3. **Auto-fix.** `python3 cppcheck-fix-uninit.py *.cpp` adds in-class defaults.
+4. **Compile and test.** Verify it compiles and works.
+5. **Manual review.** Check `*.bak` files and handle reference members manually.
+6. **Repeat.** `./generate_test.sh` resets for another round.
 
 For best results with build flags:
 
@@ -410,6 +409,7 @@ bear -- ./build_script.sh
 | `uninit_guarded_test.h/cpp` | 15 | 6 feature flags, compound `&&`/`||`/`!` guards |
 | `test_elif_guards.py` | - | Unit test for `#elif`/`#else` guard chain tracking |
 | `test_check_uninit_all.py` | - | Unit test for per-macro passes and max-configs guard |
+| `test_fix_uninit.py` | - | Unit test for Python fixer per-macro and -I behavior |
 | `test_bear_integration.py` | - | Integration test for `-I` and `--project` workflows |
 
 Regenerate test files with `./generate_test.sh`. Run `make check` for quick checks or `make check-all` for full suite.

@@ -10,17 +10,14 @@
       <h1 id="cppcheck-uninitialized-member-detector">cppcheck Uninitialized Member Detector</h1>
 <p>Find and auto-fix uninitialized member variables in C++ classes with automatic handling of <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> preprocessor guards.</p>
 <h2 id="quick-start">Quick Start</h2>
-<pre><code class="hljs bash language-bash"><span class="hljs-comment"># 1. Find uninitialized members</span>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># Find only (bash script)</span>
 ./check_uninit_all.sh *.cpp
 
-<span class="hljs-comment"># 2. Auto-fix (in-class defaults = header int a_; -&gt; int a_ = 0;)</span>
-./cppcheck-fix-uninit.py *.cpp
+<span class="hljs-comment"># Find + auto-fix in one step (Python script)</span>
+python3 cppcheck-fix-uninit.py *.cpp
 
-<span class="hljs-comment"># 3. Verify clean</span>
-./cppcheck-fix-uninit.py --report-only *.cpp
-
-<span class="hljs-comment"># Or all at once: find + fix + verify</span>
-./cppcheck-fix-uninit.py *.cpp &amp;&amp; ./cppcheck-fix-uninit.py --report-only *.cpp
+<span class="hljs-comment"># Preview without modifying</span>
+python3 cppcheck-fix-uninit.py --report-only *.cpp
 
 <span class="hljs-comment"># For #if-heavy code, in-class mode handles guards automatically (default).</span>
 <span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
@@ -151,7 +148,11 @@ bear -- ./build_script.sh
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing. However, <code>-I</code> only affects cppcheck's analysis — it does <strong>not</strong> add headers to the macro extraction step. The bash script only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files for <code>#if</code>/<code>#ifdef</code> macros. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</p>
+<p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing.</p>
+<ul>
+<li><strong>Bash script (<code>check_uninit_all.sh</code>):</strong> <code>-I</code> only affects cppcheck's analysis. Macro extraction only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</li>
+<li><strong>Python fixer (<code>cppcheck-fix-uninit.py</code>):</strong> <code>-I</code> affects both cppcheck's analysis AND macro extraction, since <code>find_headers()</code> scans <code>-I</code> directories for macros. This means macros from separate include directories DO appear in the per-macro pass list.</li>
+</ul>
 <p>The Python fixer needs <code>-I</code> to find the headers for type parsing and in-class default insertion. Without <code>-I</code>, type info will not be found and the fixer falls back to <code>{}</code> values. Use the same <code>-I</code> flags for the Python fixer as you use for the bash script. Passing <code>--project=compile_commands.json</code> resolves includes automatically.</p>
 <h3 id="test-harness">Test harness</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Regenerate both test suites (resets all uninitialized members)</span>
@@ -425,9 +426,8 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <h2 id="workflow">Workflow</h2>
 <ol>
 <li><strong>Generate test files.</strong> <code>./generate_test.sh</code> resets both test suites.</li>
-<li><strong>Scan.</strong> <code>./check_uninit_all.sh -I /api *.cpp</code> to see what is uninitialized.</li>
-<li><strong>Preview with guards.</strong> <code>./cppcheck-fix-uninit.py -v --report-only *.cpp</code>.</li>
-<li><strong>Auto-fix.</strong> <code>./cppcheck-fix-uninit.py *.cpp</code> adds in-class defaults.</li>
+<li><strong>Find.</strong> <code>./check_uninit_all.sh -I /api *.cpp</code> to see what is uninitialized, or <code>python3 cppcheck-fix-uninit.py -v --report-only *.cpp</code> for a preview with guard info.</li>
+<li><strong>Auto-fix.</strong> <code>python3 cppcheck-fix-uninit.py *.cpp</code> adds in-class defaults.</li>
 <li><strong>Compile and test.</strong> Verify it compiles and works.</li>
 <li><strong>Manual review.</strong> Check <code>*.bak</code> files and handle reference members manually.</li>
 <li><strong>Repeat.</strong> <code>./generate_test.sh</code> resets for another round.</li>
@@ -465,6 +465,11 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <td><code>test_check_uninit_all.py</code></td>
 <td>-</td>
 <td>Unit test for per-macro passes and max-configs guard</td>
+</tr>
+<tr>
+<td><code>test_fix_uninit.py</code></td>
+<td>-</td>
+<td>Unit test for Python fixer per-macro and -I behavior</td>
 </tr>
 <tr>
 <td><code>test_bear_integration.py</code></td>
