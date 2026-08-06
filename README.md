@@ -46,7 +46,7 @@ The `--cppcheck-build-dir` cache makes repeated runs fast — each subsequent pa
 
 ### Max-configs guard
 
-Before running cppcheck, the script checks whether `--max-configs` can cover all combinations of the discovered macros. If 2^N exceeds the limit, it errors out with the required value:
+Both scripts check whether `--max-configs` can cover all combinations of the discovered macros. If 2^N exceeds the limit, they error out with the required value:
 
 ```text
 ERROR: --max-configs=9999 is too low for 14 macros.
@@ -54,10 +54,14 @@ ERROR: --max-configs=9999 is too low for 14 macros.
   Rerun with: --max-configs=16384
 ```
 
-Pass `--max-configs=N` as a cppcheck flag to override:
+Pass `--max-configs=N` to override:
 
 ```bash
+# bash script: pass through as a cppcheck flag
 ./check_uninit_all.sh --max-configs=16384 *.cpp
+
+# Python script: built-in argument
+python3 cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 ```
 
 ### Compound condition detection
@@ -157,6 +161,8 @@ bear -- ./build_script.sh
 # Preview only, do not modify
 ./cppcheck-fix-uninit.py --report-only *.cpp
 ./cppcheck-fix-uninit.py -v --report-only *.cpp
+	# Raise config limit for codebases with many feature flags
+	./cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 ```
 
 Creates `.bak` backup files before any modification.

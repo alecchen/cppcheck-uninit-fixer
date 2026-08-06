@@ -65,13 +65,17 @@ python3 cppcheck-fix-uninit.py --report-only *.cpp
 </table>
 <p>The <code>--cppcheck-build-dir</code> cache makes repeated runs fast — each subsequent pass only rechecks code paths affected by the different <code>-D</code> flag.</p>
 <h3 id="max-configs-guard">Max-configs guard</h3>
-<p>Before running cppcheck, the script checks whether <code>--max-configs</code> can cover all combinations of the discovered macros. If 2^N exceeds the limit, it errors out with the required value:</p>
+<p>Both scripts check whether <code>--max-configs</code> can cover all combinations of the discovered macros. If 2^N exceeds the limit, they error out with the required value:</p>
 <pre><code class="hljs text language-text">ERROR: --max-configs=9999 is too low for 14 macros.
   Worst-case configs needed: 2^14 = 16384
   Rerun with: --max-configs=16384
 </code></pre>
-<p>Pass <code>--max-configs=N</code> as a cppcheck flag to override:</p>
-<pre><code class="hljs bash language-bash">./check_uninit_all.sh --max-configs=16384 *.cpp
+<p>Pass <code>--max-configs=N</code> to override:</p>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># bash script: pass through as a cppcheck flag</span>
+./check_uninit_all.sh --max-configs=16384 *.cpp
+
+<span class="hljs-comment"># Python script: built-in argument</span>
+python3 cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 </code></pre>
 <h3 id="compound-condition-detection">Compound condition detection</h3>
 <p>The bash script flags <code>#if</code> conditions with 3+ user macros for manual review:</p>
@@ -145,6 +149,8 @@ bear -- ./build_script.sh
 <span class="hljs-comment"># Preview only, do not modify</span>
 ./cppcheck-fix-uninit.py --report-only *.cpp
 ./cppcheck-fix-uninit.py -v --report-only *.cpp
+    <span class="hljs-comment"># Raise config limit for codebases with many feature flags</span>
+    ./cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
