@@ -29,7 +29,7 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 
 
-def cppcheck_xml(sources, defines=None, project=None):
+def cppcheck_xml(sources, defines=None, project=None, max_configs=9999):
     """Run cppcheck with --xml, return parsed ElementTree root.
 
     Pass sources (for header/macro scanning) and optionally project
@@ -38,7 +38,7 @@ def cppcheck_xml(sources, defines=None, project=None):
     """
     cmd = [
         "cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
-        "--max-configs=9999", "--check-level=exhaustive",
+        f"--max-configs={max_configs}", "--check-level=exhaustive",
         "-j", str(os.cpu_count() or 4),
         "--suppress=missingIncludeSystem", "--suppress=unmatchedSuppression",
         "--suppress=checkersReport", "--suppress=unusedFunction",
@@ -663,6 +663,9 @@ def main():
                          'When set, cppcheck uses the compilation database instead '
                          'of requiring -I and -D flags. Source files from the DB are '
                          'also used for header/macro scanning.')
+    ap.add_argument('--max-configs', dest='max_configs', type=int, default=9999,
+                    help='Maximum cppcheck configs per file (default: 9999). '
+                         'Must be >= 2^N where N is the number of extracted macros.')
     args = ap.parse_args()
 
     global VERBOSE
@@ -710,22 +713,39 @@ def main():
         for m in macros:
             print(f"    {m}", file=sys.stderr)
     if not macros and VERBOSE:
-        print("    (none found - skipping pass 2)", file=sys.stderr)
+        print("    (none found - skipping per-macro passes)", file=sys.stderr)
+
+    # Verify --max-configs covers all macro combinations
+    max_cfg = getattr(args, 'max_configs', 9999)
+    if macros:
+        needed = 1 << len(macros)   # 2^N
+        if needed > max_cfg:
+            print(f"ERROR: --max-configs={max_cfg} is too low for {len(macros)} macros.",
+                  file=sys.stderr)
+            print(f"  Worst-case configs needed: 2^{len(macros)} = {needed}",
+                  file=sys.stderr)
+            print(f"  Rerun with: --max-configs={needed}", file=sys.stderr)
+            sys.exit(1)
+        if VERBOSE:
+            print(f"  max-configs check: 2^{len(macros)} = {needed} <= {max_cfg} (OK)",
+                  file=sys.stderr)
 
     # ---- Phase 2: Run cppcheck (base + per-macro passes) ----
     print("Phase 2: running cppcheck (base + per-macro passes)...", file=sys.stderr)
     project_path = os.path.abspath(args.project) if args.project else None
-    xml_root = cppcheck_xml(sources, extra, project=project_path)
+    xml_root = cppcheck_xml(sources, extra, project=project_path,
+                            max_configs=max_cfg)
 
     for m in macros:
         print(f"Phase 2: running cppcheck (-D{m}=1)...", file=sys.stderr)
         if VERBOSE:
             src_part = [f'--project={args.project}'] if args.project else sources
             cmd2 = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
-                    "--max-configs=9999", "--check-level=exhaustive",
+                    f"--max-configs={max_cfg}", "--check-level=exhaustive",
                     "-j", str(os.cpu_count() or 4)] + extra + [f'-D{m}=1'] + src_part
             print(f"  cmd: {' '.join(cmd2)}", file=sys.stderr)
-        xml2 = cppcheck_xml(sources, extra + [f'-D{m}=1'], project=project_path)
+        xml2 = cppcheck_xml(sources, extra + [f'-D{m}=1'],
+                            project=project_path, max_configs=max_cfg)
         # Merge into first pass results
         e1 = xml_root.find('errors')
         e2 = xml2.find('errors')

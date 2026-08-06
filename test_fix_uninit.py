@@ -168,4 +168,83 @@ shutil.rmtree(d4, ignore_errors=True)
 print("Test 4 PASS  -I: guarded member found, macro extracted from -I header")
 
 
-print("\nAll 4 cppcheck-fix-uninit.py per-macro tests passed")
+# -----------------------------------------------------------------------
+# Test 5: max-configs guard -- 4 macros with --max-configs=8 errors out
+# -----------------------------------------------------------------------
+
+d5 = make_project({
+    'test_maxcfg.h': """\
+        class TestMaxCfg {
+        public:
+            TestMaxCfg();
+        #if A
+            int a_;
+        #endif
+        #if B
+            int b_;
+        #endif
+        #if C
+            int c_;
+        #endif
+        #if D
+            int d_;
+        #endif
+        };
+        """,
+    'test_maxcfg.cpp': """\
+        #include "test_maxcfg.h"
+        TestMaxCfg::TestMaxCfg() {}
+        """,
+})
+
+cpp5 = os.path.join(d5, 'test_maxcfg.cpp')
+r5 = subprocess.run(
+    [sys.executable, FIXER, '--max-configs=8', '--report-only', cpp5],
+    cwd=d5, capture_output=True, text=True)
+assert r5.returncode != 0, f"Should exit with error: {r5.stderr[:500]}"
+assert '16' in r5.stderr and 'max-configs=8 is too low' in r5.stderr, \
+    f"Expected max-configs error: {r5.stderr[:500]}"
+shutil.rmtree(d5, ignore_errors=True)
+print("Test 5 PASS  max-configs guard: 4 macros with --max-configs=8 errors out")
+
+
+# -----------------------------------------------------------------------
+# Test 6: 4 macros with --max-configs=16 passes
+# -----------------------------------------------------------------------
+
+d6 = make_project({
+    'test_maxcfg.h': """\
+        class TestMaxCfg {
+        public:
+            TestMaxCfg();
+        #if A
+            int a_;
+        #endif
+        #if B
+            int b_;
+        #endif
+        #if C
+            int c_;
+        #endif
+        #if D
+            int d_;
+        #endif
+        };
+        """,
+    'test_maxcfg.cpp': """\
+        #include "test_maxcfg.h"
+        TestMaxCfg::TestMaxCfg() {}
+        """,
+})
+
+cpp6 = os.path.join(d6, 'test_maxcfg.cpp')
+r6 = subprocess.run(
+    [sys.executable, FIXER, '--max-configs=16', '--report-only', cpp6],
+    cwd=d6, capture_output=True, text=True)
+assert r6.returncode == 0, f"Should pass: {r6.stderr[-500:]}"
+assert 'a_' in r6.stdout, f"Missing a_: {r6.stdout[-500:]}"
+shutil.rmtree(d6, ignore_errors=True)
+print("Test 6 PASS  max-configs guard: --max-configs=16 passes for 4 macros")
+
+
+print("\nAll 6 cppcheck-fix-uninit.py per-macro tests passed")
