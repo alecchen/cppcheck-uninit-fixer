@@ -8,7 +8,7 @@ Usage:
     ./cppcheck-fix-uninit.py --report-only *.cpp
     ./cppcheck-fix-uninit.py --project=compile_commands.json
 
-Finds uninitialized members using cppcheck (two-pass: base + all-macros-defined),
+Finds uninitialized members using cppcheck (base pass + one pass per macro),
 then inserts missing initializations into constructors. Creates .bak backups.
 
 Supports: all primitives, pointers, references, fixed-width integers,
@@ -712,29 +712,21 @@ def main():
     if not macros and VERBOSE:
         print("    (none found - skipping pass 2)", file=sys.stderr)
 
-    # ---- Phase 2: Run cppcheck (Pass 1 + Pass 2) ----
-    print("Phase 2: running cppcheck (pass 1 - base config)...", file=sys.stderr)
-    if VERBOSE:
-        src_part = [f'--project={args.project}'] if args.project else sources
-        cmd = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
-               "--max-configs=9999", "--check-level=exhaustive",
-               "-j", str(os.cpu_count() or 4)] + extra + src_part
-        print(f"  cmd: {' '.join(cmd)}", file=sys.stderr)
-
+    # ---- Phase 2: Run cppcheck (base + per-macro passes) ----
+    print("Phase 2: running cppcheck (base + per-macro passes)...", file=sys.stderr)
     project_path = os.path.abspath(args.project) if args.project else None
     xml_root = cppcheck_xml(sources, extra, project=project_path)
 
-    if macros:
-        all_defs = [f'-D{m}=1' for m in macros]
-        print("Phase 2: running cppcheck (pass 2 - all macros defined)...", file=sys.stderr)
+    for m in macros:
+        print(f"Phase 2: running cppcheck (-D{m}=1)...", file=sys.stderr)
         if VERBOSE:
             src_part = [f'--project={args.project}'] if args.project else sources
             cmd2 = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
                     "--max-configs=9999", "--check-level=exhaustive",
-                    "-j", str(os.cpu_count() or 4)] + extra + all_defs + src_part
+                    "-j", str(os.cpu_count() or 4)] + extra + [f'-D{m}=1'] + src_part
             print(f"  cmd: {' '.join(cmd2)}", file=sys.stderr)
-        xml2 = cppcheck_xml(sources, extra + all_defs, project=project_path)
-        # Merge second pass errors into first
+        xml2 = cppcheck_xml(sources, extra + [f'-D{m}=1'], project=project_path)
+        # Merge into first pass results
         e1 = xml_root.find('errors')
         e2 = xml2.find('errors')
         if e1 is not None and e2 is not None:
@@ -742,7 +734,7 @@ def main():
                 e1.append(err)
             if VERBOSE:
                 n2 = len(xml2.findall('.//error'))
-                print(f"  pass 2 added {n2} error(s) from defined-macros config", file=sys.stderr)
+                print(f"  -D{m}=1 added {n2} error(s)", file=sys.stderr)
 
     # ---- Phase 3: Parse findings ----
     print("Phase 3: parsing findings...", file=sys.stderr)
