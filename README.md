@@ -14,8 +14,9 @@ python3 cppcheck-fix-uninit.py *.cpp
 # Preview without modifying
 python3 cppcheck-fix-uninit.py --report-only *.cpp
 
-# Large codebase: skip cppcheck, default every member (instant)
-python3 cppcheck-fix-uninit.py --fast *.cpp
+# Large codebase: skip cppcheck, default every member (instant).
+# Accepts .cpp, .h/.hpp, or directories.
+python3 cppcheck-fix-uninit.py --fast include/
 
 # For #if-heavy code, in-class mode handles guards automatically (default).
 # For constructor init-lists instead: add --init-list
@@ -118,8 +119,8 @@ Use `--init-list` for projects that prefer explicit per-constructor initializati
 **Fast mode (`--fast`).** Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. It runs instantly and uses no cppcheck memory. Members with class, enum, or typedef types are skipped. Members already initialized in constructors still get a default, which is redundant but harmless:
 
 ```bash
-python3 cppcheck-fix-uninit.py --fast *.cpp
-python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+python3 cppcheck-fix-uninit.py --fast include/
+python3 cppcheck-fix-uninit.py --fast --report-only widget.h
 ```
 
 Member detection is regex-based (`parse_member_types`). Any line containing `(` or `)` is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (`int a_, b_;`) are split and each member is fixed.
@@ -429,10 +430,10 @@ Start with `--fast` when you want UB gone across a large legacy codebase and you
 
 ```bash
 # 1. Preview what would change
-python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+python3 cppcheck-fix-uninit.py --fast --report-only include/
 
 # 2. Apply (writes .bak backups)
-python3 cppcheck-fix-uninit.py --fast *.cpp
+python3 cppcheck-fix-uninit.py --fast include/
 
 # 3. Compile and test
 ```

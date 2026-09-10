@@ -19,8 +19,9 @@ python3 cppcheck-fix-uninit.py *.cpp
 <span class="hljs-comment"># Preview without modifying</span>
 python3 cppcheck-fix-uninit.py --report-only *.cpp
 
-<span class="hljs-comment"># Large codebase: skip cppcheck, default every member (instant)</span>
-python3 cppcheck-fix-uninit.py --fast *.cpp
+<span class="hljs-comment"># Large codebase: skip cppcheck, default every member (instant).</span>
+<span class="hljs-comment"># Accepts .cpp, .h/.hpp, or directories.</span>
+python3 cppcheck-fix-uninit.py --fast include/
 
 <span class="hljs-comment"># For #if-heavy code, in-class mode handles guards automatically (default).</span>
 <span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
@@ -110,8 +111,8 @@ python3 cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 </code></pre>
 <p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
 <p><strong>Fast mode (<code>--fast</code>).</strong> Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. It runs instantly and uses no cppcheck memory. Members with class, enum, or typedef types are skipped. Members already initialized in constructors still get a default, which is redundant but harmless:</p>
-<pre><code class="hljs bash language-bash">python3 cppcheck-fix-uninit.py --fast *.cpp
-python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+<pre><code class="hljs bash language-bash">python3 cppcheck-fix-uninit.py --fast include/
+python3 cppcheck-fix-uninit.py --fast --report-only widget.h
 </code></pre>
 <p>Member detection is regex-based (<code>parse_member_types</code>). Any line containing <code>(</code> or <code>)</code> is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (<code>int a_, b_;</code>) are split and each member is fixed.</p>
 <h2 id="usage">Usage</h2>
@@ -485,10 +486,10 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <p>Start with <code>--fast</code> when you want UB gone across a large legacy codebase and you will review the diff. Use cppcheck mode when you want a narrow, evidence-based fix or you are actively developing the code.</p>
 <h3 id="fast-path">Fast path</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># 1. Preview what would change</span>
-python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+python3 cppcheck-fix-uninit.py --fast --report-only include/
 
 <span class="hljs-comment"># 2. Apply (writes .bak backups)</span>
-python3 cppcheck-fix-uninit.py --fast *.cpp
+python3 cppcheck-fix-uninit.py --fast include/
 
 <span class="hljs-comment"># 3. Compile and test</span>
 </code></pre>
