@@ -14,6 +14,9 @@ python3 cppcheck-fix-uninit.py *.cpp
 # Preview without modifying
 python3 cppcheck-fix-uninit.py --report-only *.cpp
 
+# Large codebase: skip cppcheck, default every member (instant)
+python3 cppcheck-fix-uninit.py --fast *.cpp
+
 # For #if-heavy code, in-class mode handles guards automatically (default).
 # For constructor init-lists instead: add --init-list
 ```
@@ -112,6 +115,15 @@ Foo::Foo()
 
 Use `--init-list` for projects that prefer explicit per-constructor initialization over in-class defaults. `#if`-guarded members are **skipped** in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.
 
+**Fast mode (`--fast`).** Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. Instant, no cppcheck time or memory. Class/enum/typedef members are skipped; members already initialized in constructors still get (redundant but harmless) defaults:
+
+```bash
+python3 cppcheck-fix-uninit.py --fast *.cpp
+python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+```
+
+Member detection is regex-based (`parse_member_types`): lines containing `(` or `)` are dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (`int a_, b_;`) are split and each member is fixed.
+
 ## Usage
 
 ### Find only (bash script)
@@ -163,11 +175,19 @@ bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py -v --report-only *.cpp
 	# Raise config limit for codebases with many feature flags
 	./cppcheck-fix-uninit.py --max-configs=16384 *.cpp
+
+# Fast: skip cppcheck, default every POD/pointer member (instant).
+# Accepts .cpp, .h, or directories (headers are fixed directly).
+./cppcheck-fix-uninit.py --fast *.cpp
+./cppcheck-fix-uninit.py --fast include/
+./cppcheck-fix-uninit.py --fast --report-only widget.h
 ```
 
 Creates `.bak` backup files before any modification.
 
-**Important:** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
+**Important (cppcheck mode):** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
+
+**`--fast` mode exception:** `--fast` skips cppcheck and parses headers directly, so it accepts `.cpp` files, `.h`/`.hpp` files, and directories. The fix is applied to the headers either way.
 
 **Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing.
 

@@ -20,6 +20,7 @@ html:
 # Quick check: guard chain tracking + shell script tests + Python fixer tests
 check:
 	python3 test_elif_guards.py
+	python3 test_fast_mode.py
 	python3 test_check_uninit_all.py
 	python3 test_fix_uninit.py
 

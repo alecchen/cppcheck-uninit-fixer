@@ -153,11 +153,22 @@ def parse_findings(xml_root):
 
 
 def find_headers(sources, include_dirs=None):
-    """Collect .h/.hpp files co-located with source files or in -I dirs."""
+    """Collect .h/.hpp files co-located with source files or in -I dirs.
+
+    Header files passed directly are included as-is; directories are
+    scanned non-recursively for headers.
+    """
     headers = set()
     dirs = set()
     for src in sources:
-        d = os.path.dirname(src)
+        a = os.path.abspath(src)
+        if os.path.isfile(a) and a.endswith(('.h', '.hpp', '.hxx')):
+            headers.add(a)
+            continue
+        if os.path.isdir(a):
+            dirs.add(a)
+            continue
+        d = os.path.dirname(a)
         if d:
             dirs.add(d)
     if include_dirs:
@@ -177,6 +188,83 @@ def find_headers(sources, include_dirs=None):
 # ---------------------------------------------------------------------------
 # Parse member types from headers
 # ---------------------------------------------------------------------------
+
+
+_DECL_KEYWORDS = {'public', 'private', 'protected', 'class', 'struct',
+                  'const', 'volatile', 'static', 'mutable', 'using', 'friend'}
+
+
+def _split_declarators(body):
+    """Split a declaration body on top-level commas (ignore <>[]{})."""
+    parts, depth, cur = [], 0, []
+    for ch in body:
+        if ch in '<[{':
+            depth += 1
+        elif ch in '>]}':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append(''.join(cur))
+    return parts
+
+
+def _parse_decl_line(s):
+    """Parse one member-declaration line into [(type, name)].
+
+    Handles comma-separated multi-declarations: `int a_, b_;`
+    Skips arrays, bitfields, and keyword declarators.
+    """
+    body = s[:-1] if s.endswith(';') else s
+    decls = _split_declarators(body)
+    m0 = re.match(r'^(.*?)\b(\w+)\s*(=|$)', decls[0])
+    if not m0:
+        return []
+    t0, base = m0.group(1).strip(), None
+    base = re.sub(r'[*&]', ' ', t0).strip()
+    out = []
+    for k, d in enumerate(decls):
+        d_no_init = d.split('=', 1)[0]
+        if k == 0:
+            t, v = t0, m0.group(2)
+        else:
+            if ':' in d_no_init:
+                continue  # bitfield
+            m3 = re.match(r'^\s*(.*?)\b(\w+)(\s*\[.*\])?\s*$', d_no_init)
+            if not m3:
+                continue
+            if m3.group(3):
+                continue  # array
+            v, t = m3.group(2), (base + ' ' + m3.group(1)).strip()
+        if v in _DECL_KEYWORDS:
+            continue
+        if t.startswith(('public:', 'private:', 'protected:')):
+            continue
+        out.append((t, v))
+    return out
+
+
+def _needs_default(line, mn):
+    """True if line declares mn without an in-class initializer."""
+    m = re.search(r'\b' + re.escape(mn) + r'\b', line)
+    if not m:
+        return False
+    rest = line[m.end():].lstrip()
+    if rest.startswith('='):
+        return False
+    return rest.startswith(',') or rest.startswith(';')
+
+
+def _insert_default(line, mn, dv):
+    """Insert ` = dv` after mn's declaration. None if already init."""
+    m = re.search(r'\b' + re.escape(mn) + r'\b', line)
+    if not m:
+        return None
+    if line[m.end():].lstrip().startswith('='):
+        return None
+    return line[:m.end()] + f" = {dv}" + line[m.end():]
 
 
 def parse_member_types(headers):
@@ -257,45 +345,35 @@ def parse_member_types(headers):
                 if '(' in s or ')' in s:
                     continue
 
-                # Match: [qualifiers...] typename varname [= ...] ;
-                m = re.match(r'^(.*?)\b(\w+)\s*[;=]', s)
-                if not m:
-                    continue
-                t, v = m.group(1).strip(), m.group(2)
-                if v in ('public','private','protected','class','struct',
-                         'const','volatile','static','mutable','using','friend'):
-                    continue
-                if t.startswith(('public:','private:','protected:')):
-                    continue
+                for t, v in _parse_decl_line(s):
+                    # Build the guard expression from the chain stack
+                    if guard_chain:
+                        parts = []
+                        for chain in guard_chain:
+                            if len(chain) == 1 and chain[0] is not None:
+                                # Simple #if
+                                active = chain[0]
+                            elif chain[-1] is None:
+                                # #else branch: negate all conditions in the chain
+                                negated = ' && '.join(
+                                    f'!({c})' if '||' in c else f'!{c}'
+                                    for c in chain[:-1]
+                                )
+                                active = negated
+                            else:
+                                # #elif branch: negate all prior, keep last
+                                prior = chain[:-1]
+                                negated = ' && '.join(
+                                    f'!({c})' if '||' in c else f'!{c}'
+                                    for c in prior
+                                )
+                                active = f'{negated} && {chain[-1]}'
+                            parts.append(f'({active})' if '||' in active else active)
+                        guard = ' && '.join(parts)
+                    else:
+                        guard = None
 
-                # Build the guard expression from the chain stack
-                if guard_chain:
-                    parts = []
-                    for chain in guard_chain:
-                        if len(chain) == 1 and chain[0] is not None:
-                            # Simple #if
-                            active = chain[0]
-                        elif chain[-1] is None:
-                            # #else branch: negate all conditions in the chain
-                            negated = ' && '.join(
-                                f'!({c})' if '||' in c else f'!{c}'
-                                for c in chain[:-1]
-                            )
-                            active = negated
-                        else:
-                            # #elif branch: negate all prior, keep last
-                            prior = chain[:-1]
-                            negated = ' && '.join(
-                                f'!({c})' if '||' in c else f'!{c}'
-                                for c in prior
-                            )
-                            active = f'{negated} && {chain[-1]}'
-                        parts.append(f'({active})' if '||' in active else active)
-                    guard = ' && '.join(parts)
-                else:
-                    guard = None
-
-                result[cls_name][v] = {'type': t, 'guard': guard}
+                    result[cls_name][v] = {'type': t, 'guard': guard}
 
     return result
 
@@ -347,6 +425,58 @@ def default_init(type_info):
 
     # Everything else -> 0 (works for int, long, short, fixed-width, enum, etc.)
     return '0'
+
+
+_POD_WORDS = {
+    'bool', 'char', 'wchar_t', 'char8_t', 'char16_t', 'char32_t',
+    'short', 'int', 'long', 'float', 'double', 'signed', 'unsigned',
+    'const', 'volatile',
+    'size_t', 'ptrdiff_t',
+    'int8_t', 'int16_t', 'int32_t', 'int64_t',
+    'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',
+    'intptr_t', 'uintptr_t', 'intmax_t', 'uintmax_t',
+}
+
+
+def default_init_strict(type_info):
+    """Like default_init, but None for unknown (non-POD) types.
+
+    Fast mode has no cppcheck findings to limit scope, so class types
+    like std::string (which self-initialize) must be skipped instead of
+    getting a bogus `= 0`. Also skips statics (in-class init is an
+    error for non-const statics pre-C++17).
+    """
+    if isinstance(type_info, dict):
+        type_str = type_info.get('type', '')
+    else:
+        type_str = type_info or ''
+    if not type_str:
+        return None
+    if '&' in type_str:
+        return None
+    if '*' in type_str:
+        return 'nullptr'
+    words = re.findall(r'[A-Za-z_]\w*', type_str.lower())
+    if not words or any(w not in _POD_WORDS for w in words):
+        return None
+    return default_init(type_str)
+
+
+def dump_member_types(member_types, strict=False):
+    """Print parsed members with guards and defaults (verbose output)."""
+    for cls, members in sorted(member_types.items()):
+        print(f"    class {cls}:", file=sys.stderr)
+        for mname, minfo in sorted(members.items()):
+            if isinstance(minfo, dict):
+                type_str = minfo.get('type', '?')
+                guard = minfo.get('guard')
+            else:
+                type_str = str(minfo)
+                guard = None
+            dv = default_init_strict(minfo) if strict else default_init(minfo)
+            dv = dv or "(skipped)"
+            g = f" [{guard}]" if guard else ""
+            print(f"      {type_str} {mname} -> {dv}{g}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -440,17 +570,13 @@ def fix_in_class(header_files, findings, member_types):
             if '(' in s or ')' in s:
                 continue
 
-            # Try to find a member declaration we need to fix
-            for mn in cls_member_names:
+            # Try to find member declarations we need to fix
+            # (a line may declare several: `int a_, b_;`)
+            orig = line
+            for mn in sorted(cls_member_names):
                 if mn not in s:
                     continue
-                # Match: ... member_name ; or ... member_name = ... ;
-                m = re.match(r'^(.*?)\b' + re.escape(mn) + r'\b\s*([;=])', s)
-                if not m:
-                    continue
-                sep = m.group(2)
-                if sep == '=':
-                    # Already has in-class initializer
+                if not _needs_default(s, mn):
                     continue
 
                 # Find the type from member_types
@@ -466,13 +592,17 @@ def fix_in_class(header_files, findings, member_types):
                 if dv is None:
                     continue  # skip references
 
-                # Insert = defaultValue before the ;
-                line_before = line[:line.index(';')]
-                lines[i] = line_before + f" = {dv};\n"
-                any_change = True
+                new_line = _insert_default(line, mn, dv)
+                if new_line is None:
+                    continue
+                line = new_line
+                s = line.strip()
                 if VERBOSE:
                     print(f"    {os.path.basename(hdr)}: {mn} = {dv}", file=sys.stderr)
                 fixed += 1
+            if line != orig:
+                lines[i] = line
+                any_change = True
 
         if any_change:
             with open(hdr + '.bak', 'w') as f:
@@ -480,6 +610,81 @@ def fix_in_class(header_files, findings, member_types):
             with open(hdr, 'w') as f:
                 f.writelines(lines)
 
+    return fixed
+
+
+def find_uninit_candidates(header_files, member_types):
+    """List (hdr, line_idx, class, member, default) for members lacking init.
+
+    Fast-mode helper: no cppcheck findings, so every parsed POD/pointer
+    member without an in-class initializer is a candidate. Skips
+    references, statics, class/enum types, and arrays (strict defaults).
+    """
+    cands = []
+    for hdr in sorted(set(os.path.abspath(h) for h in header_files)):
+        if not os.path.isfile(hdr):
+            continue
+        try:
+            with open(hdr) as f:
+                lines = f.readlines()
+        except Exception:
+            continue
+        seen = set()  # (class, member) already reported in this header
+        for i, line in enumerate(lines):
+            s = line.strip()
+            if (not s or s.startswith(('//', '#', '/*', '*', 'public', 'private',
+                                        'protected', 'typedef', 'using ', 'friend',
+                                        'return', '}', '{'))):
+                continue
+            if '(' in s or ')' in s:
+                continue
+            for cls in sorted(member_types):
+                for mn, info in sorted(member_types[cls].items()):
+                    if (cls, mn) in seen or mn not in s:
+                        continue
+                    if not _needs_default(s, mn):
+                        continue
+                    dv = default_init_strict(info)
+                    if dv is None:
+                        continue
+                    cands.append((hdr, i, cls, mn, dv))
+                    seen.add((cls, mn))
+    return cands
+
+
+def fix_all_in_class(header_files, member_types):
+    """Fast mode: add in-class defaults to every uninit POD/pointer member.
+
+    Skips cppcheck entirely. Returns count of members fixed.
+    """
+    cands = find_uninit_candidates(header_files, member_types)
+    by_hdr = defaultdict(list)
+    for hdr, i, cls, mn, dv in cands:
+        by_hdr[hdr].append((i, mn, dv))
+
+    fixed = 0
+    for hdr, items in sorted(by_hdr.items()):
+        with open(hdr) as f:
+            lines = f.readlines()
+        # Group members sharing a line (`int a_, b_;`); insert right to
+        # left so earlier offsets stay valid.
+        per_line = defaultdict(list)
+        for i, mn, dv in items:
+            per_line[i].append((mn, dv))
+        for i in sorted(per_line):
+            for mn, dv in sorted(per_line[i], key=lambda p: lines[i].find(p[0]),
+                                 reverse=True):
+                new_line = _insert_default(lines[i], mn, dv)
+                if new_line is None or new_line == lines[i]:
+                    continue
+                lines[i] = new_line
+                if VERBOSE:
+                    print(f"    {os.path.basename(hdr)}: {mn} = {dv}", file=sys.stderr)
+                fixed += 1
+        with open(hdr + '.bak', 'w') as f:
+            f.writelines(lines)
+        with open(hdr, 'w') as f:
+            f.writelines(lines)
     return fixed
 
 
@@ -643,7 +848,9 @@ def main():
     ap = argparse.ArgumentParser(
         description='Find and auto-fix uninitialized C++ member variables.')
     ap.add_argument('sources', nargs='*', default=[],
-                    help='Source files (.cpp). May be omitted when --project is given.')
+                    help='Source files (.cpp) or, with --fast, also headers '
+                         '(.h/.hpp) and directories. May be omitted when '
+                         '--project is given.')
     ap.add_argument('--report-only', action='store_true',
                     help='Only print findings, do not modify')
     ap.add_argument('-v', '--verbose', action='store_true',
@@ -666,12 +873,26 @@ def main():
     ap.add_argument('--max-configs', dest='max_configs', type=int, default=9999,
                     help='Maximum cppcheck configs per file (default: 9999). '
                          'Must be >= 2^N where N is the number of extracted macros.')
+    ap.add_argument('--fast', action='store_true',
+                    help='Skip cppcheck entirely: add in-class defaults to every '
+                         'parsed POD/pointer member without an initializer. '
+                         'Instant, no cppcheck time or memory. Class/enum/ '
+                         'typedef members are skipped; members already '
+                         'initialized in constructors still get (redundant but '
+                         'harmless) defaults.')
     args = ap.parse_args()
 
     global VERBOSE
     VERBOSE = args.verbose
 
-    sources = [os.path.abspath(s) for s in args.sources if os.path.isfile(s)]
+    raw_inputs = [s for s in args.sources
+                  if os.path.isfile(s) or os.path.isdir(s)]
+    if args.fast:
+        # Fast mode fixes headers directly: keep header/dir inputs too.
+        sources = [os.path.abspath(s) for s in raw_inputs]
+    else:
+        sources = [os.path.abspath(s) for s in raw_inputs
+                   if s.endswith(('.cpp', '.c', '.cc', '.cxx'))]
 
     # When --project is given, extract source files from the compilation DB
     project_sources = []
@@ -696,6 +917,27 @@ def main():
         print("Error: no source files found. Pass .cpp files or use --project.",
               file=sys.stderr)
         sys.exit(1)
+
+    # ---- Fast mode: skip cppcheck, default every parsed member ----
+    headers = find_headers(all_sources, args.includes)
+    member_types = parse_member_types(headers)
+    if args.fast:
+        total = sum(len(v) for v in member_types.values())
+        print(f"Fast mode: parsed {total} member(s), skipping cppcheck...", file=sys.stderr)
+        if VERBOSE and member_types:
+            dump_member_types(member_types, strict=True)
+        if args.report_only:
+            for hdr, i, cls, mn, dv in find_uninit_candidates(headers, member_types):
+                print(f"  {hdr}:{i + 1}: {cls}::{mn} -> {dv}")
+            return
+        if args.init_list:
+            print("Error: --fast only supports in-class defaults, not --init-list.",
+                  file=sys.stderr)
+            sys.exit(1)
+        n = fix_all_in_class(headers, member_types)
+        print(f"\nDone. Added in-class defaults for {n} member(s). Backups (*.bak) created.",
+              file=sys.stderr)
+        return
 
     extra = []
     for inc in args.includes:
@@ -777,24 +1019,10 @@ def main():
 
     # ---- Phase 4: Parse member types ----
     print("Phase 4: parsing member types from headers...", file=sys.stderr)
-    headers = find_headers(all_sources, args.includes)
-    member_types = parse_member_types(headers)
     total_types = sum(len(v) for v in member_types.values())
     print(f"  parsed {total_types} member(s) from headers", file=sys.stderr)
     if VERBOSE and member_types:
-        for cls, members in sorted(member_types.items()):
-            print(f"    class {cls}:", file=sys.stderr)
-            for mname, minfo in sorted(members.items()):
-                if isinstance(minfo, dict):
-                    type_str = minfo.get('type', '?')
-                    guard = minfo.get('guard')
-                else:
-                    type_str = str(minfo)
-                    guard = None
-                default = default_init(minfo)
-                dv = default or "(reference - skipped)"
-                g = f" [{guard}]" if guard else ""
-                print(f"      {type_str} {mname} -> {dv}{g}", file=sys.stderr)
+        dump_member_types(member_types)
 
     # ---- Phase 5: Apply fixes ----
     print("Phase 5: applying fixes...", file=sys.stderr)

@@ -19,6 +19,9 @@ python3 cppcheck-fix-uninit.py *.cpp
 <span class="hljs-comment"># Preview without modifying</span>
 python3 cppcheck-fix-uninit.py --report-only *.cpp
 
+<span class="hljs-comment"># Large codebase: skip cppcheck, default every member (instant)</span>
+python3 cppcheck-fix-uninit.py --fast *.cpp
+
 <span class="hljs-comment"># For #if-heavy code, in-class mode handles guards automatically (default).</span>
 <span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
 </code></pre>
@@ -106,6 +109,11 @@ python3 cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 {}
 </code></pre>
 <p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
+<p><strong>Fast mode (<code>--fast</code>).</strong> Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. Instant, no cppcheck time or memory. Class/enum/typedef members are skipped; members already initialized in constructors still get (redundant but harmless) defaults:</p>
+<pre><code class="hljs bash language-bash">python3 cppcheck-fix-uninit.py --fast *.cpp
+python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+</code></pre>
+<p>Member detection is regex-based (<code>parse_member_types</code>): lines containing <code>(</code> or <code>)</code> are dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (<code>int a_, b_;</code>) are split and each member is fixed.</p>
 <h2 id="usage">Usage</h2>
 <h3 id="find-only-bash-script">Find only (bash script)</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files in current directory</span>
@@ -151,9 +159,16 @@ bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py -v --report-only *.cpp
     <span class="hljs-comment"># Raise config limit for codebases with many feature flags</span>
     ./cppcheck-fix-uninit.py --max-configs=16384 *.cpp
+
+<span class="hljs-comment"># Fast: skip cppcheck, default every POD/pointer member (instant).</span>
+<span class="hljs-comment"># Accepts .cpp, .h, or directories (headers are fixed directly).</span>
+./cppcheck-fix-uninit.py --fast *.cpp
+./cppcheck-fix-uninit.py --fast include/
+./cppcheck-fix-uninit.py --fast --report-only widget.h
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
-<p><strong>Important:</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
+<p><strong>Important (cppcheck mode):</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
+<p><strong><code>--fast</code> mode exception:</strong> <code>--fast</code> skips cppcheck and parses headers directly, so it accepts <code>.cpp</code> files, <code>.h</code>/<code>.hpp</code> files, and directories. The fix is applied to the headers either way.</p>
 <p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing.</p>
 <ul>
 <li><strong>Bash script (<code>check_uninit_all.sh</code>):</strong> <code>-I</code> only affects cppcheck's analysis. Macro extraction only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</li>
