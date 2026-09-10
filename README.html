@@ -26,12 +26,12 @@ python3 cppcheck-fix-uninit.py --fast *.cpp
 <span class="hljs-comment"># For constructor init-lists instead: add --init-list</span>
 </code></pre>
 <h2 id="the-problem">The Problem</h2>
-<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but it has blind spots when the code uses preprocessor conditionals:</p>
+<p>cppcheck finds most uninitialized members of primitive types (<code>int</code>, <code>double</code>, <code>float</code>, <code>bool</code>, <code>char*</code>, etc.), but misses them when the code uses preprocessor conditionals:</p>
 <ol>
 <li><p><strong>Config discovery depends on parsing.</strong> cppcheck discovers config variables from <code>#ifdef</code> blocks it encounters during analysis. If member declarations live in template-heavy or third-party headers (boost, yaml-cpp, igraph) that cppcheck cannot fully parse, those guards are invisible.</p></li>
 <li><p><strong>Default config limit.</strong> cppcheck checks at most 12 configs per file by default. With N config variables, exhaustive checking needs 2^N configs. At 14+ macros, even <code>--max-configs=9999</code> is too low.</p></li>
 </ol>
-<p>Both scripts solve this with a per-macro strategy.</p>
+<p>Both scripts work around this by running cppcheck once per macro.</p>
 <h2 id="how-it-works">How It Works</h2>
 <h3 id="per-macro-cppcheck-strategy">Per-macro cppcheck strategy</h3>
 <p>The bash script extracts all user macros from <code>#if</code>/<code>#ifdef</code>/<code>#ifndef</code>/<code>#elif</code> directives, then runs cppcheck once per macro with just that macro defined (<code>-DMACRO=1</code>), plus a base pass with no extra defines.</p>
@@ -109,11 +109,11 @@ python3 cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 {}
 </code></pre>
 <p>Use <code>--init-list</code> for projects that prefer explicit per-constructor initialization over in-class defaults. <code>#if</code>-guarded members are <strong>skipped</strong> in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.</p>
-<p><strong>Fast mode (<code>--fast</code>).</strong> Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. Instant, no cppcheck time or memory. Class/enum/typedef members are skipped; members already initialized in constructors still get (redundant but harmless) defaults:</p>
+<p><strong>Fast mode (<code>--fast</code>).</strong> Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. It runs instantly and uses no cppcheck memory. Members with class, enum, or typedef types are skipped. Members already initialized in constructors still get a default, which is redundant but harmless:</p>
 <pre><code class="hljs bash language-bash">python3 cppcheck-fix-uninit.py --fast *.cpp
 python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
 </code></pre>
-<p>Member detection is regex-based (<code>parse_member_types</code>): lines containing <code>(</code> or <code>)</code> are dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (<code>int a_, b_;</code>) are split and each member is fixed.</p>
+<p>Member detection is regex-based (<code>parse_member_types</code>). Any line containing <code>(</code> or <code>)</code> is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (<code>int a_, b_;</code>) are split and each member is fixed.</p>
 <h2 id="usage">Usage</h2>
 <h3 id="find-only-bash-script">Find only (bash script)</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files in current directory</span>

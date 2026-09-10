@@ -24,13 +24,13 @@ python3 cppcheck-fix-uninit.py --fast *.cpp
 
 ## The Problem
 
-cppcheck finds most uninitialized members of primitive types (`int`, `double`, `float`, `bool`, `char*`, etc.), but it has blind spots when the code uses preprocessor conditionals:
+cppcheck finds most uninitialized members of primitive types (`int`, `double`, `float`, `bool`, `char*`, etc.), but misses them when the code uses preprocessor conditionals:
 
 1. **Config discovery depends on parsing.** cppcheck discovers config variables from `#ifdef` blocks it encounters during analysis. If member declarations live in template-heavy or third-party headers (boost, yaml-cpp, igraph) that cppcheck cannot fully parse, those guards are invisible.
 
 2. **Default config limit.** cppcheck checks at most 12 configs per file by default. With N config variables, exhaustive checking needs 2^N configs. At 14+ macros, even `--max-configs=9999` is too low.
 
-Both scripts solve this with a per-macro strategy.
+Both scripts work around this by running cppcheck once per macro.
 
 ## How It Works
 
@@ -115,14 +115,14 @@ Foo::Foo()
 
 Use `--init-list` for projects that prefer explicit per-constructor initialization over in-class defaults. `#if`-guarded members are **skipped** in init-list mode. The C++ init-list comma syntax is position-dependent, so inserting a conditional entry unconditionally produces invalid code when the guard evaluates to false.
 
-**Fast mode (`--fast`).** Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. Instant, no cppcheck time or memory. Class/enum/typedef members are skipped; members already initialized in constructors still get (redundant but harmless) defaults:
+**Fast mode (`--fast`).** Skips cppcheck entirely and adds in-class defaults to every parsed POD/pointer member without an initializer. It runs instantly and uses no cppcheck memory. Members with class, enum, or typedef types are skipped. Members already initialized in constructors still get a default, which is redundant but harmless:
 
 ```bash
 python3 cppcheck-fix-uninit.py --fast *.cpp
 python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
 ```
 
-Member detection is regex-based (`parse_member_types`): lines containing `(` or `)` are dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (`int a_, b_;`) are split and each member is fixed.
+Member detection is regex-based (`parse_member_types`). Any line containing `(` or `)` is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (`int a_, b_;`) are split and each member is fixed.
 
 ## Usage
 
