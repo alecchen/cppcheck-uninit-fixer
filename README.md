@@ -123,7 +123,7 @@ python3 cppcheck-fix-uninit.py --fast include/
 python3 cppcheck-fix-uninit.py --fast --report-only widget.h
 ```
 
-Member detection is regex-based (`parse_member_types`). Any line containing `(` or `)` is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (`int a_, b_;`) are split and each member is fixed.
+Member detection is regex-based (`parse_member_types`). Any line containing `(` or `)` is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (`int a_, b_;`) are split and each member is fixed. Nested class members are attributed to their own class, not the enclosing one.
 
 ## Usage
 
@@ -188,7 +188,7 @@ Creates `.bak` backup files before any modification.
 
 **Important (cppcheck mode):** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
-**`--fast` mode exception:** `--fast` skips cppcheck and parses headers directly, so it accepts `.cpp` files, `.h`/`.hpp` files, and directories. The fix is applied to the headers either way.
+**`--fast` mode exception:** `--fast` skips cppcheck and parses sources directly, so it accepts `.cpp` files, `.h`/`.hpp` files, and directories. Classes defined in a `.cpp` (internal classes, pimpl) are parsed along with headers. Passing a `.cpp` also picks up headers in the same directory.
 
 **Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing.
 
@@ -409,6 +409,7 @@ cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
 
 - **Reference members** (`T&`, `const T&`) cannot be auto-fixed. There is no known binding target.
 - **Header parsing** is regex-based. Complex types (nested templates, macros-as-types) fall back to `{}`, which is safe.
+- **Nested classes** are parsed correctly, but a member declared in a nested class belongs only to that class. `--fast` warns when it parses zero members, which usually means the paths point at no C++ sources.
 - **Preprocessor macros in member declarations** (`STATUS_FLAG flags_;`) are not parsed. They fall back to `{}`.
 - **Init-list mode** (`--init-list`) skips `#if`-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.
 

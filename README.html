@@ -114,7 +114,7 @@ python3 cppcheck-fix-uninit.py --max-configs=16384 *.cpp
 <pre><code class="hljs bash language-bash">python3 cppcheck-fix-uninit.py --fast include/
 python3 cppcheck-fix-uninit.py --fast --report-only widget.h
 </code></pre>
-<p>Member detection is regex-based (<code>parse_member_types</code>). Any line containing <code>(</code> or <code>)</code> is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (<code>int a_, b_;</code>) are split and each member is fixed.</p>
+<p>Member detection is regex-based (<code>parse_member_types</code>). Any line containing <code>(</code> or <code>)</code> is dropped, so method declarations and their arguments are never parsed as members. Comma-separated declarations (<code>int a_, b_;</code>) are split and each member is fixed. Nested class members are attributed to their own class, not the enclosing one.</p>
 <h2 id="usage">Usage</h2>
 <h3 id="find-only-bash-script">Find only (bash script)</h3>
 <pre><code class="hljs bash language-bash"><span class="hljs-comment"># Scan .cpp files in current directory</span>
@@ -169,7 +169,7 @@ bear -- ./build_script.sh
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important (cppcheck mode):</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><strong><code>--fast</code> mode exception:</strong> <code>--fast</code> skips cppcheck and parses headers directly, so it accepts <code>.cpp</code> files, <code>.h</code>/<code>.hpp</code> files, and directories. The fix is applied to the headers either way.</p>
+<p><strong><code>--fast</code> mode exception:</strong> <code>--fast</code> skips cppcheck and parses sources directly, so it accepts <code>.cpp</code> files, <code>.h</code>/<code>.hpp</code> files, and directories. Classes defined in a <code>.cpp</code> (internal classes, pimpl) are parsed along with headers. Passing a <code>.cpp</code> also picks up headers in the same directory.</p>
 <p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing.</p>
 <ul>
 <li><strong>Bash script (<code>check_uninit_all.sh</code>):</strong> <code>-I</code> only affects cppcheck's analysis. Macro extraction only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</li>
@@ -442,6 +442,7 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <ul>
 <li><strong>Reference members</strong> (<code>T&amp;</code>, <code>const T&amp;</code>) cannot be auto-fixed. There is no known binding target.</li>
 <li><strong>Header parsing</strong> is regex-based. Complex types (nested templates, macros-as-types) fall back to <code>{}</code>, which is safe.</li>
+<li><strong>Nested classes</strong> are parsed correctly, but a member declared in a nested class belongs only to that class. <code>--fast</code> warns when it parses zero members, which usually means the paths point at no C++ sources.</li>
 <li><strong>Preprocessor macros in member declarations</strong> (<code>STATUS_FLAG flags_;</code>) are not parsed. They fall back to <code>{}</code>.</li>
 <li><strong>Init-list mode</strong> (<code>--init-list</code>) skips <code>#if</code>-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.</li>
 </ul>

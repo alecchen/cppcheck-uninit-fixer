@@ -186,4 +186,142 @@ shutil.rmtree(d, ignore_errors=True)
 print("Test 5 PASS  --fast accepts .h files and directories")
 
 
-print("\nAll 5 --fast mode tests passed")
+# Test 6: classes defined in a .cpp are parsed (internal class, pimpl)
+# -----------------------------------------------------------------------
+
+d = make_project({
+    'impl.cpp': """\
+        #include <string>
+
+        class Impl {
+        public:
+            Impl();
+        private:
+            int handle_;
+            const char* name_;
+            std::string buf_;
+        };
+
+        Impl::Impl() {}
+
+        class Holder {
+        public:
+            Holder();
+        private:
+            struct Impl2;
+            Impl2* p_;
+            int flags_;
+        };
+
+        Holder::Holder() {}
+        """,
+})
+cpp = os.path.join(d, 'impl.cpp')
+r = subprocess.run(
+    [sys.executable, FIXER, '--fast', '--report-only', cpp],
+    cwd=d, capture_output=True, text=True)
+assert r.returncode == 0, f"--fast failed: {r.stderr[-300:]}"
+for mn in ('handle_', 'name_', 'p_', 'flags_'):
+    assert mn in r.stdout, f"missing {mn} from .cpp-defined class: {r.stdout[-400:]}"
+assert 'buf_' not in r.stdout, f"std::string must be skipped: {r.stdout[-400:]}"
+
+# function-body locals must not be picked up
+d2 = make_project({
+    'body.cpp': """\
+        class Only {
+        public:
+            Only();
+        private:
+            int real_;
+        };
+
+        Only::Only() {
+            int local = 0;
+            char buf[64];
+            for (int i = 0; i < 3; ++i) {
+                long inner;
+            }
+        }
+        """,
+})
+r2 = subprocess.run(
+    [sys.executable, FIXER, '--fast', '--report-only',
+     os.path.join(d2, 'body.cpp')],
+    cwd=d2, capture_output=True, text=True)
+assert 'real_' in r2.stdout, f"missing real_: {r2.stdout[-300:]}"
+for bad in ('local', 'buf', 'inner', 'i'):
+    assert f'::{bad} ' not in r2.stdout and f'::{bad}\n' not in r2.stdout, \
+        f"function-body local {bad} leaked: {r2.stdout[-400:]}"
+shutil.rmtree(d, ignore_errors=True)
+shutil.rmtree(d2, ignore_errors=True)
+print("Test 6 PASS  .cpp-defined classes parsed, function locals ignored")
+
+
+# -----------------------------------------------------------------------
+# Test 7: nested class members are not attributed to the outer class
+# -----------------------------------------------------------------------
+
+d = make_project({
+    'nest.h': """\
+        class Outer {
+        public:
+            Outer();
+            class Inner {
+            public:
+                Inner();
+            private:
+                int inner_b_;
+            };
+        private:
+            int outer_c_;
+        };
+        """,
+    'nest.cpp': """\
+        #include "nest.h"
+        Outer::Outer() {}
+        """,
+})
+r = subprocess.run(
+    [sys.executable, FIXER, '--fast', '--report-only',
+     os.path.join(d, 'nest.h')],
+    cwd=d, capture_output=True, text=True)
+assert r.returncode == 0, f"--fast failed: {r.stderr[-300:]}"
+assert 'Outer::inner_b_' not in r.stdout, \
+    f"nested member attributed to outer class: {r.stdout[-400:]}"
+assert 'Inner::inner_b_' in r.stdout, \
+    f"nested member missing from its own class: {r.stdout[-400:]}"
+assert 'Outer::outer_c_' in r.stdout, f"missing outer_c_: {r.stdout[-400:]}"
+
+# apply and check the fix lands in the right class
+r = subprocess.run(
+    [sys.executable, FIXER, '--fast', os.path.join(d, 'nest.h')],
+    cwd=d, capture_output=True, text=True)
+text = open(os.path.join(d, 'nest.h')).read()
+assert 'int inner_b_ = 0;' in text, f"inner_b_ not fixed:\n{text}"
+assert 'int outer_c_ = 0;' in text, f"outer_c_ not fixed:\n{text}"
+assert text.count('inner_b_ = 0') == 1, f"inner_b_ fixed twice:\n{text}"
+shutil.rmtree(d, ignore_errors=True)
+print("Test 7 PASS  nested class members attributed correctly")
+
+
+# -----------------------------------------------------------------------
+# Test 8: --fast warns when it parses nothing
+# -----------------------------------------------------------------------
+
+d = make_project({
+    'empty.cpp': """\
+        int main() { return 0; }
+        """,
+})
+r = subprocess.run(
+    [sys.executable, FIXER, '--fast', '--report-only',
+     os.path.join(d, 'empty.cpp')],
+    cwd=d, capture_output=True, text=True)
+assert r.returncode == 0
+assert 'no members parsed' in r.stderr, \
+    f"expected a warning on zero members: {r.stderr[-300:]}"
+shutil.rmtree(d, ignore_errors=True)
+print("Test 8 PASS  --fast warns when nothing is parsed")
+
+
+print("\nAll 8 --fast mode tests passed")

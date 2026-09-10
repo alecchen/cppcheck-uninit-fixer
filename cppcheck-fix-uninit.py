@@ -165,19 +165,27 @@ def parse_findings(xml_root):
 # ---------------------------------------------------------------------------
 
 
-def find_headers(sources, include_dirs=None):
-    """Collect .h/.hpp files co-located with source files or in -I dirs.
+def find_headers(sources, include_dirs=None, with_sources=False):
+    """Collect header files to parse for member declarations.
 
     Header files passed directly are included as-is; directories are
-    scanned non-recursively for headers.
+    scanned non-recursively. With with_sources=True (fast mode), .cpp
+    files are collected too, so classes defined in a translation unit
+    (internal classes, pimpl) are seen. cppcheck mode leaves it False:
+    it analyzes .cpp files itself.
     """
     headers = set()
     dirs = set()
+    hdr_exts = ('.h', '.hpp', '.hxx')
+    src_exts = ('.cpp', '.c', '.cc', '.cxx')
+    wanted = hdr_exts + src_exts if with_sources else hdr_exts
+
     for src in sources:
         a = os.path.abspath(src)
-        if os.path.isfile(a) and a.endswith(('.h', '.hpp', '.hxx')):
+        if os.path.isfile(a) and a.endswith(wanted):
             headers.add(a)
-            continue
+            # Fall through: a .cpp input still needs its co-located
+            # headers scanned, so do not continue here.
         if os.path.isdir(a):
             dirs.add(a)
             continue
@@ -191,7 +199,7 @@ def find_headers(sources, include_dirs=None):
             continue
         try:
             for fn in os.listdir(d):
-                if fn.endswith(('.h', '.hpp', '.hxx')):
+                if fn.endswith(wanted):
                     headers.add(os.path.abspath(os.path.join(d, fn)))
         except PermissionError:
             continue
@@ -322,6 +330,7 @@ def parse_member_types(headers):
             #     int y;       -> active = "!A && !B"
             #   #endif         -> pop
             guard_chain = []  # list of lists: chain per nesting level
+            brace_depth = 0   # >0 means inside a nested class/struct body
 
             for raw_line in body.split('\n'):
                 s = raw_line.strip()
@@ -349,11 +358,22 @@ def parse_member_types(headers):
                         guard_chain.pop()
                     continue
 
+                # Members of a nested class belong to that class, not this
+                # one. Skip anything inside a nested body, tracking depth so
+                # a nested class's own members are still recorded when the
+                # outer scan reaches it.
+                if brace_depth > 0:
+                    brace_depth += s.count('{') - s.count('}')
+                    continue
+
                 # Skip non-declaration lines
                 if (not s or s.startswith(('//','#','/*','*','public','private','protected',
                     'typedef','using ','friend','static_assert','enum','template',
                     'explicit','virtual','operator','constexpr','noexcept',
                     'override','final','default','delete','struct','class'))):
+                    # A nested class/struct opens a body we must skip over.
+                    if re.match(r'^(class|struct)\b.*\{\s*$', s):
+                        brace_depth = 1
                     continue
                 if '(' in s or ')' in s:
                     continue
@@ -932,11 +952,16 @@ def main():
         sys.exit(1)
 
     # ---- Fast mode: skip cppcheck, default every parsed member ----
-    headers = find_headers(all_sources, args.includes)
+    # Fast mode parses .cpp files too, so classes defined in a translation
+    # unit (internal classes, pimpl) are included.
+    headers = find_headers(all_sources, args.includes, with_sources=args.fast)
     member_types = parse_member_types(headers)
     if args.fast:
         total = sum(len(v) for v in member_types.values())
         print(f"Fast mode: parsed {total} member(s), skipping cppcheck...", file=sys.stderr)
+        if total == 0:
+            print("  warning: no members parsed. Check that the paths point at "
+                  "C++ sources or headers.", file=sys.stderr)
         if VERBOSE and member_types:
             dump_member_types(member_types, strict=True)
         if args.report_only:
