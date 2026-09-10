@@ -413,14 +413,53 @@ cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
 
 ## Workflow
 
-1. **Generate test files.** `./generate_test.sh` resets both test suites.
-2. **Find.** `./check_uninit_all.sh -I /api *.cpp` to see what is uninitialized, or `python3 cppcheck-fix-uninit.py -v --report-only *.cpp` for a preview with guard info.
-3. **Auto-fix.** `python3 cppcheck-fix-uninit.py *.cpp` adds in-class defaults.
-4. **Compile and test.** Verify it compiles and works.
-5. **Manual review.** Check `*.bak` files and handle reference members manually.
-6. **Repeat.** `./generate_test.sh` resets for another round.
+### Choosing a mode
 
-For best results with build flags:
+| | `--fast` | cppcheck mode (default) |
+|---|---|---|
+| Speed | Instant | Slower, scales with codebase size |
+| What it fixes | Every parsed POD/pointer member | Only members cppcheck reports |
+| Diff size | Large, includes already-initialized members | Minimal |
+| Guarded members | Fixed in place | Fixed in place |
+| Risk | A default can mask a genuinely missing assignment | Lower |
+
+Start with `--fast` when you want UB gone across a large legacy codebase and you will review the diff. Use cppcheck mode when you want a narrow, evidence-based fix or you are actively developing the code.
+
+### Fast path
+
+```bash
+# 1. Preview what would change
+python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+
+# 2. Apply (writes .bak backups)
+python3 cppcheck-fix-uninit.py --fast *.cpp
+
+# 3. Compile and test
+```
+
+If step 1 lists members you know are already initialized in constructors, that is expected. They get redundant defaults, which is harmless but noisy.
+
+### cppcheck path
+
+```bash
+# 1. See what is uninitialized
+./check_uninit_all.sh -I /api *.cpp
+
+# 2. Preview fixes with guard info
+python3 cppcheck-fix-uninit.py -v --report-only *.cpp
+
+# 3. Apply
+python3 cppcheck-fix-uninit.py *.cpp
+
+# 4. Compile and test
+```
+
+### After either path
+
+1. **Review.** Check `*.bak` files. Handle reference members by hand.
+2. **Reset test files.** `./generate_test.sh` restores both suites.
+
+For build-aware analysis (resolves `-I` and `-D` from your build):
 
 ```bash
 bear -- ./build_script.sh

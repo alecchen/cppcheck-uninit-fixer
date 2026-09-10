@@ -445,15 +445,72 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <li><strong>Init-list mode</strong> (<code>--init-list</code>) skips <code>#if</code>-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.</li>
 </ul>
 <h2 id="workflow">Workflow</h2>
+<h3 id="choosing-a-mode">Choosing a mode</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>--fast</code></th>
+<th>cppcheck mode (default)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Speed</td>
+<td>Instant</td>
+<td>Slower, scales with codebase size</td>
+</tr>
+<tr>
+<td>What it fixes</td>
+<td>Every parsed POD/pointer member</td>
+<td>Only members cppcheck reports</td>
+</tr>
+<tr>
+<td>Diff size</td>
+<td>Large, includes already-initialized members</td>
+<td>Minimal</td>
+</tr>
+<tr>
+<td>Guarded members</td>
+<td>Fixed in place</td>
+<td>Fixed in place</td>
+</tr>
+<tr>
+<td>Risk</td>
+<td>A default can mask a genuinely missing assignment</td>
+<td>Lower</td>
+</tr>
+</tbody>
+</table>
+<p>Start with <code>--fast</code> when you want UB gone across a large legacy codebase and you will review the diff. Use cppcheck mode when you want a narrow, evidence-based fix or you are actively developing the code.</p>
+<h3 id="fast-path">Fast path</h3>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># 1. Preview what would change</span>
+python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
+
+<span class="hljs-comment"># 2. Apply (writes .bak backups)</span>
+python3 cppcheck-fix-uninit.py --fast *.cpp
+
+<span class="hljs-comment"># 3. Compile and test</span>
+</code></pre>
+<p>If step 1 lists members you know are already initialized in constructors, that is expected. They get redundant defaults, which is harmless but noisy.</p>
+<h3 id="cppcheck-path">cppcheck path</h3>
+<pre><code class="hljs bash language-bash"><span class="hljs-comment"># 1. See what is uninitialized</span>
+./check_uninit_all.sh -I /api *.cpp
+
+<span class="hljs-comment"># 2. Preview fixes with guard info</span>
+python3 cppcheck-fix-uninit.py -v --report-only *.cpp
+
+<span class="hljs-comment"># 3. Apply</span>
+python3 cppcheck-fix-uninit.py *.cpp
+
+<span class="hljs-comment"># 4. Compile and test</span>
+</code></pre>
+<h3 id="after-either-path">After either path</h3>
 <ol>
-<li><strong>Generate test files.</strong> <code>./generate_test.sh</code> resets both test suites.</li>
-<li><strong>Find.</strong> <code>./check_uninit_all.sh -I /api *.cpp</code> to see what is uninitialized, or <code>python3 cppcheck-fix-uninit.py -v --report-only *.cpp</code> for a preview with guard info.</li>
-<li><strong>Auto-fix.</strong> <code>python3 cppcheck-fix-uninit.py *.cpp</code> adds in-class defaults.</li>
-<li><strong>Compile and test.</strong> Verify it compiles and works.</li>
-<li><strong>Manual review.</strong> Check <code>*.bak</code> files and handle reference members manually.</li>
-<li><strong>Repeat.</strong> <code>./generate_test.sh</code> resets for another round.</li>
+<li><strong>Review.</strong> Check <code>*.bak</code> files. Handle reference members by hand.</li>
+<li><strong>Reset test files.</strong> <code>./generate_test.sh</code> restores both suites.</li>
 </ol>
-<p>For best results with build flags:</p>
+<p>For build-aware analysis (resolves <code>-I</code> and <code>-D</code> from your build):</p>
 <pre><code class="hljs bash language-bash">bear -- ./build_script.sh
 ./cppcheck-fix-uninit.py --project=compile_commands.json
 </code></pre>
