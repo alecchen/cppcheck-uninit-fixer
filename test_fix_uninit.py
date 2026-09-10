@@ -1,21 +1,10 @@
 #!/usr/bin/env python3
 """Test cppcheck-fix-uninit.py per-macro passes find guarded members."""
-import os, sys, tempfile, subprocess, textwrap, shutil
+import os, sys, subprocess, shutil
+
+from test_helpers import make_project
 
 FIXER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cppcheck-fix-uninit.py')
-
-
-def make_project(files):
-    d = tempfile.mkdtemp()
-    for name, content in files.items():
-        text = textwrap.dedent(content)
-        if text.startswith('\n'):
-            text = text[1:]
-        path = os.path.join(d, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-    return d
 
 
 # -----------------------------------------------------------------------

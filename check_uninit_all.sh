@@ -1,5 +1,5 @@
 #!/bin/bash
-# check_uninit_all.sh — automatic cppcheck for uninitialized members
+# check_uninit_all.sh -- automatic cppcheck for uninitialized members
 # Scans source for all #if/#ifdef/#ifndef macros, then runs cppcheck
 # once per macro (each defined individually) to catch every guarded member.
 #
@@ -7,7 +7,7 @@
 #   ./check_uninit_all.sh file1.cpp file2.cpp
 #   ./check_uninit_all.sh -I /path/to/api/headers *.cpp
 #
-# No manual -D flags needed — extracts them automatically.
+# No manual -D flags needed -- extracts them automatically.
 
 set -eo pipefail
 
@@ -141,7 +141,7 @@ echo "  $(wc -l < "$TEMP_DIR/pass1.txt") findings"
 # Pass 2+: One pass per user macro.  Each pass defines exactly one macro.
 # Catches every member guarded by #ifdef MACRO / #ifndef MACRO / #if MACRO.
 # The --cppcheck-build-dir cache avoids re-analyzing unchanged code across
-# passes — each subsequent run only rechecks the affected code paths.
+# passes -- each subsequent run only rechecks the affected code paths.
 PASS_NUM=1
 for m in $ALL_MACROS; do
     PASS_NUM=$((PASS_NUM + 1))

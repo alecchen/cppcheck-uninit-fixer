@@ -66,7 +66,7 @@ python3 cppcheck-fix-uninit.py --fast *.cpp
 </tr>
 </tbody>
 </table>
-<p>The <code>--cppcheck-build-dir</code> cache makes repeated runs fast — each subsequent pass only rechecks code paths affected by the different <code>-D</code> flag.</p>
+<p>The <code>--cppcheck-build-dir</code> cache makes repeated runs fast -- each subsequent pass only rechecks code paths affected by the different <code>-D</code> flag.</p>
 <h3 id="max-configs-guard">Max-configs guard</h3>
 <p>Both scripts check whether <code>--max-configs</code> can cover all combinations of the discovered macros. If 2^N exceeds the limit, they error out with the required value:</p>
 <pre><code class="hljs text language-text">ERROR: --max-configs=9999 is too low for 14 macros.
@@ -125,14 +125,14 @@ python3 cppcheck-fix-uninit.py --fast --report-only *.cpp
 <span class="hljs-comment"># With additional flags passed through</span>
 ./check_uninit_all.sh -I /path -j 8 --suppress=unusedFunction *.cpp
 
-<span class="hljs-comment"># Recursive directory scan (zsh — default on macOS)</span>
+<span class="hljs-comment"># Recursive directory scan (zsh -- default on macOS)</span>
 ./check_uninit_all.sh <span class="hljs-built_in">dir</span>/**/*.cpp
 
 <span class="hljs-comment"># Recursive directory scan (bash)</span>
 <span class="hljs-built_in">shopt</span> -s globstar
 ./check_uninit_all.sh <span class="hljs-built_in">dir</span>/**/*.cpp
 
-<span class="hljs-comment"># Recursive directory scan (universal — any shell)</span>
+<span class="hljs-comment"># Recursive directory scan (universal -- any shell)</span>
 find <span class="hljs-built_in">dir</span>/ -name <span class="hljs-string">&#x27;*.cpp&#x27;</span> -print0 | xargs -0 ./check_uninit_all.sh
 
 <span class="hljs-comment"># Narrow to specific subdirectory, exclude third-party code</span>
@@ -421,11 +421,11 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 #endif
 
 #if A &amp;&amp; !B
-    int hidden_;  // caught by -DA=1 pass (A on, B off — B is off in per-macro passes for other macros)
+    int hidden_;  // caught by -DA=1 pass (A on, B off -- B is off in per-macro passes for other macros)
 #endif
 
 #if A &amp;&amp; B &amp;&amp; C
-    int hidden_;  // NOT caught — no single pass has all three on
+    int hidden_;  // NOT caught -- no single pass has all three on
 #endif
 </code></pre>
 <p>Per-macro passes catch all single-macro and two-macro <code>#if</code> combinations (because one macro is on from <code>-D</code> and the other is on from cppcheck's own config discovery). Three-macro combinations and <code>#if A &amp;&amp; B &amp;&amp; !C</code> patterns are flagged by the compound condition detector for manual review:</p>

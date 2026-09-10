@@ -45,7 +45,7 @@ The bash script extracts all user macros from `#if`/`#ifdef`/`#ifndef`/`#elif` d
 | `-DMACRO2=1` | Macro 2 defined | Members behind `#ifdef MACRO2`, `#if MACRO2` |
 | ... | One per macro | All single-macro guards |
 
-The `--cppcheck-build-dir` cache makes repeated runs fast — each subsequent pass only rechecks code paths affected by the different `-D` flag.
+The `--cppcheck-build-dir` cache makes repeated runs fast -- each subsequent pass only rechecks code paths affected by the different `-D` flag.
 
 ### Max-configs guard
 
@@ -138,14 +138,14 @@ Member detection is regex-based (`parse_member_types`): lines containing `(` or 
 # With additional flags passed through
 ./check_uninit_all.sh -I /path -j 8 --suppress=unusedFunction *.cpp
 
-# Recursive directory scan (zsh — default on macOS)
+# Recursive directory scan (zsh -- default on macOS)
 ./check_uninit_all.sh dir/**/*.cpp
 
 # Recursive directory scan (bash)
 shopt -s globstar
 ./check_uninit_all.sh dir/**/*.cpp
 
-# Recursive directory scan (universal — any shell)
+# Recursive directory scan (universal -- any shell)
 find dir/ -name '*.cpp' -print0 | xargs -0 ./check_uninit_all.sh
 
 # Narrow to specific subdirectory, exclude third-party code
@@ -384,11 +384,11 @@ Guarded members (`[BUILD_PERFORMANCE]`, etc.) appear in findings but are skipped
 #endif
 
 #if A && !B
-    int hidden_;  // caught by -DA=1 pass (A on, B off — B is off in per-macro passes for other macros)
+    int hidden_;  // caught by -DA=1 pass (A on, B off -- B is off in per-macro passes for other macros)
 #endif
 
 #if A && B && C
-    int hidden_;  // NOT caught — no single pass has all three on
+    int hidden_;  // NOT caught -- no single pass has all three on
 #endif
 ```
 

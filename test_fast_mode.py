@@ -4,28 +4,15 @@ import importlib.util
 import os
 import subprocess
 import sys
-import tempfile
-import textwrap
 import shutil
+
+from test_helpers import make_project
 
 FIXER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      'cppcheck-fix-uninit.py')
 spec = importlib.util.spec_from_file_location("fast_fixer", FIXER)
 fixer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixer)
-
-
-def make_project(files):
-    d = tempfile.mkdtemp()
-    for name, content in files.items():
-        text = textwrap.dedent(content)
-        if text.startswith('\n'):
-            text = text[1:]
-        path = os.path.join(d, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-    return d
 
 
 EDGE_H = """\

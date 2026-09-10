@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cppcheck-fix-uninit.py — find and auto-fix uninitialized member variables.
+cppcheck-fix-uninit.py -- find and auto-fix uninitialized member variables.
 
 Usage:
     ./cppcheck-fix-uninit.py file1.cpp file2.cpp
@@ -29,6 +29,31 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 
 
+CPPCHECK_SUPPRESS = [
+    "--suppress=missingIncludeSystem", "--suppress=unmatchedSuppression",
+    "--suppress=checkersReport", "--suppress=unusedFunction",
+]
+
+CACHE_DIR = ".cppcheck-cache"
+
+
+def cppcheck_cmd(sources, defines=None, project=None, max_configs=9999):
+    """Build the cppcheck argv. Shared by the runner and verbose output."""
+    cmd = [
+        "cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
+        f"--max-configs={max_configs}", "--check-level=exhaustive",
+        "-j", str(os.cpu_count() or 4),
+        f"--cppcheck-build-dir={CACHE_DIR}",
+    ] + CPPCHECK_SUPPRESS
+    if defines:
+        cmd.extend(defines)
+    if project:
+        cmd.append(f'--project={project}')
+    else:
+        cmd.extend(sources)
+    return cmd
+
+
 def cppcheck_xml(sources, defines=None, project=None, max_configs=9999):
     """Run cppcheck with --xml, return parsed ElementTree root.
 
@@ -36,20 +61,8 @@ def cppcheck_xml(sources, defines=None, project=None, max_configs=9999):
     (compile_commands.json path) for cppcheck's own analysis.
     When project is set, cppcheck gets --project=<path> instead of sources.
     """
-    cmd = [
-        "cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
-        f"--max-configs={max_configs}", "--check-level=exhaustive",
-        "-j", str(os.cpu_count() or 4),
-        "--suppress=missingIncludeSystem", "--suppress=unmatchedSuppression",
-        "--suppress=checkersReport", "--suppress=unusedFunction",
-    ]
-    if defines:
-        cmd.extend(defines)
-    if project:
-        cmd.append(f'--project={project}')
-    else:
-        cmd.extend(sources)
-
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cmd = cppcheck_cmd(sources, defines, project, max_configs)
     proc = subprocess.run(cmd, capture_output=True, text=True)
     # cppcheck writes XML to stderr, progress to stdout
     try:
@@ -975,16 +988,16 @@ def main():
     # ---- Phase 2: Run cppcheck (base + per-macro passes) ----
     print("Phase 2: running cppcheck (base + per-macro passes)...", file=sys.stderr)
     project_path = os.path.abspath(args.project) if args.project else None
+    if VERBOSE:
+        cmd0 = cppcheck_cmd(sources, extra, project_path, max_cfg)
+        print(f"  cmd: {' '.join(cmd0)}", file=sys.stderr)
     xml_root = cppcheck_xml(sources, extra, project=project_path,
                             max_configs=max_cfg)
 
     for m in macros:
         print(f"Phase 2: running cppcheck (-D{m}=1)...", file=sys.stderr)
         if VERBOSE:
-            src_part = [f'--project={args.project}'] if args.project else sources
-            cmd2 = ["cppcheck", "--quiet", "--xml", "--enable=warning", "--inconclusive",
-                    f"--max-configs={max_cfg}", "--check-level=exhaustive",
-                    "-j", str(os.cpu_count() or 4)] + extra + [f'-D{m}=1'] + src_part
+            cmd2 = cppcheck_cmd(sources, extra + [f'-D{m}=1'], project_path, max_cfg)
             print(f"  cmd: {' '.join(cmd2)}", file=sys.stderr)
         xml2 = cppcheck_xml(sources, extra + [f'-D{m}=1'],
                             project=project_path, max_configs=max_cfg)

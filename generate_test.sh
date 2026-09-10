@@ -1,12 +1,12 @@
 #!/bin/sh
-# generate_test.sh — create fresh test files with uninitialized members
+# generate_test.sh -- create fresh test files with uninitialized members
 # Run this before testing to reset:
 #   ./generate_test.sh
 #   ./cppcheck-fix-uninit.py --report-only uninit_test.cpp
 
 set -e
 
-# ---- Header (member declarations — always clean) ----
+# ---- Header (member declarations -- always clean) ----
 cat > uninit_test.h << 'HEADER'
 #ifndef UNINIT_TEST_H
 #define UNINIT_TEST_H
@@ -95,13 +95,13 @@ cat > uninit_test.cpp << 'SOURCE'
 #include "uninit_test.h"
 #include <cstring>
 
-// Default ctor — only const_ref_ initialized (compiler-mandated)
-// Everything else is UNINITIALIZED — 27 members missing
+// Default ctor -- only const_ref_ initialized (compiler-mandated)
+// Everything else is UNINITIALIZED -- 27 members missing
 DataHolder::DataHolder()
     : const_ref_(value_)
 {}
 
-// Param ctor — init-list has some, misses 15 members
+// Param ctor -- init-list has some, misses 15 members
 DataHolder::DataHolder(int a, double b)
     : id_(a), value_(b), const_val_(a), const_ref_(value_),
       const_ptr_(nullptr), const_string_("d"), const_buf_(nullptr),
@@ -109,7 +109,7 @@ DataHolder::DataHolder(int a, double b)
       cv_ptr_(nullptr), ptr_cv_(nullptr), ratio_(static_cast<float>(b))
 {}
 
-// String ctor — init-list has const/ref/ptr, body assigns label_
+// String ctor -- init-list has const/ref/ptr, body assigns label_
 // Misses 15 members
 DataHolder::DataHolder(const char* s)
     : id_(42), buf_size_(static_cast<int>(std::strlen(s))),
@@ -133,13 +133,13 @@ cat > uninit_guarded_test.h << 'GUARDED_H'
 // ====================================================================
 // Guarded test: multiple #if flags + compound conditions.
 //
-// Flags used (all UNDEFINED — cppcheck must test all combos):
-//   USE_LEGACY      — enables legacy code paths
-//   FEATURE_X       — feature toggle
-//   FEATURE_Y       — feature toggle (appears with FEATURE_X)
-//   PLATFORM_A       — platform-specific code
-//   PLATFORM_B       — another platform
-//   BUILD_PERFORMANCE — extra optimization fields
+// Flags used (all UNDEFINED -- cppcheck must test all combos):
+//   USE_LEGACY      -- enables legacy code paths
+//   FEATURE_X       -- feature toggle
+//   FEATURE_Y       -- feature toggle (appears with FEATURE_X)
+//   PLATFORM_A       -- platform-specific code
+//   PLATFORM_B       -- another platform
+//   BUILD_PERFORMANCE -- extra optimization fields
 // ====================================================================
 
 class ServiceConfig {

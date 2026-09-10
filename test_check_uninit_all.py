@@ -1,32 +1,17 @@
 #!/usr/bin/env python3
 """Test check_uninit_all.sh: max-configs guard + per-macro pass coverage."""
-import os, sys, tempfile, subprocess, textwrap, shutil
+import os, sys, subprocess, shutil
+
+from test_helpers import make_project
 
 SCRIPT = os.path.abspath(os.path.join(os.path.dirname(__file__) or '.',
                                        'check_uninit_all.sh'))
 
-
-def make_files(files, d=None):
-    """Create temp dir with given {name: content} dict. Returns dir path.
-
-    Names may include directory components (e.g. 'subdir/file.h').
-    Intermediate directories are created automatically.
-    """
-    if d is None:
-        d = tempfile.mkdtemp()
-    for name, content in files.items():
-        text = textwrap.dedent(content)
-        if text.startswith('\n'):
-            text = text[1:]
-        path = os.path.join(d, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-    return d
+make_files = make_project  # local alias used throughout this suite
 
 
 # -----------------------------------------------------------------------
-# Test 1: max-configs guard — 4 macros, limit=8 → error (2^4=16 > 8)
+# Test 1: max-configs guard -- 4 macros, limit=8 -> error (2^4=16 > 8)
 # -----------------------------------------------------------------------
 
 d1 = make_files({
@@ -140,7 +125,7 @@ print("Test 3 PASS  #ifdef-guarded members found via per-macro passes")
 
 
 # -----------------------------------------------------------------------
-# Test 4: #ifndef guard — member found in base pass (macro undefined)
+# Test 4: #ifndef guard -- member found in base pass (macro undefined)
 # -----------------------------------------------------------------------
 
 d4 = make_files({
@@ -212,7 +197,7 @@ print("Test 5 PASS  #if and #ifdef macros both found")
 
 
 # -----------------------------------------------------------------------
-# Test 6: source in subdirectory — header found in same subdir
+# Test 6: source in subdirectory -- header found in same subdir
 # -----------------------------------------------------------------------
 
 d6 = make_files({
@@ -246,7 +231,7 @@ print("Test 6 PASS  subdirectory: header found, macro extracted, members detecte
 
 
 # -----------------------------------------------------------------------
-# Test 7: multiple source dirs — simulating 'dir/**/*.cpp' glob expansion
+# Test 7: multiple source dirs -- simulating 'dir/**/*.cpp' glob expansion
 # -----------------------------------------------------------------------
 
 d7 = make_files({
@@ -298,7 +283,7 @@ print("Test 7 PASS  multiple subdirectories: both dirs analyzed, macros combined
 
 
 # -----------------------------------------------------------------------
-# Test 8: separate source and header dirs — requires -I
+# Test 8: separate source and header dirs -- requires -I
 # -----------------------------------------------------------------------
 
 d8 = make_files({
@@ -347,7 +332,7 @@ print("Test 8 PASS  -I resolves separate header dir, -I not used for macro extra
 
 
 # -----------------------------------------------------------------------
-# Test 9: 14 macros with default --max-configs=9999 → error (2^14=16384)
+# Test 9: 14 macros with default --max-configs=9999 -> error (2^14=16384)
 # -----------------------------------------------------------------------
 
 MACRO_COUNT = 14
@@ -384,7 +369,7 @@ print(f"Test 9 PASS  {MACRO_COUNT} macros with default --max-configs=9999 errors
 
 
 # -----------------------------------------------------------------------
-# Test 10: 14 macros with sufficient --max-configs=16384 → passes
+# Test 10: 14 macros with sufficient --max-configs=16384 -> passes
 # -----------------------------------------------------------------------
 
 d10 = make_files({
