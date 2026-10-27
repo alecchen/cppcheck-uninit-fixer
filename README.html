@@ -169,7 +169,7 @@ bear -- ./build_script.sh
 </code></pre>
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important (cppcheck mode):</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
-<p><strong><code>--fast</code> mode exception:</strong> <code>--fast</code> skips cppcheck and parses sources directly, so it accepts <code>.cpp</code> files, <code>.h</code>/<code>.hpp</code> files, and directories. Classes defined in a <code>.cpp</code> (internal classes, pimpl) are parsed along with headers. Passing a <code>.cpp</code> also picks up headers in the same directory.</p>
+<p><strong><code>--fast</code> mode exception:</strong> <code>--fast</code> skips cppcheck and parses sources directly, so it accepts <code>.cpp</code> files, <code>.h</code>/<code>.hpp</code> files, and directories. Classes defined in a <code>.cpp</code> (internal classes, pimpl) are parsed along with headers. Passing a <code>.cpp</code> also picks up headers in the same directory. Passing a header parses only that header; pass the directory (or the <code>.cpp</code> files) to cover more. <code>.c</code> files are never parsed.</p>
 <p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing.</p>
 <ul>
 <li><strong>Bash script (<code>check_uninit_all.sh</code>):</strong> <code>-I</code> only affects cppcheck's analysis. Macro extraction only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</li>
@@ -446,6 +446,82 @@ Done. Fixed 7 constructor(s). Backups (*.bak) created.
 <li><strong>Preprocessor macros in member declarations</strong> (<code>STATUS_FLAG flags_;</code>) are not parsed. They fall back to <code>{}</code>.</li>
 <li><strong>Init-list mode</strong> (<code>--init-list</code>) skips <code>#if</code>-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.</li>
 </ul>
+<h3 id="members-the-fixer-skips">Members the fixer skips</h3>
+<p><code>--fast</code> reports every parsed member it will not default in <code>-v</code> output as <code>(skipped)</code>. The full list:</p>
+<table>
+<thead>
+<tr>
+<th>Skipped</th>
+<th>Example</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>References</td>
+<td><code>int&amp; r_;</code></td>
+<td>no binding target exists</td>
+</tr>
+<tr>
+<td>Class, struct, enum, typedef types</td>
+<td><code>std::string s_;</code>, <code>Color c_;</code></td>
+<td>they self-initialize, <code>= 0</code> would not compile</td>
+</tr>
+<tr>
+<td>Types that are macros</td>
+<td><code>STATUS_FLAG f_;</code></td>
+<td>macro is not recognized as a POD type</td>
+</tr>
+<tr>
+<td><code>static</code> members</td>
+<td><code>static int count_;</code></td>
+<td>in-class init is illegal for non-const statics pre-C++17</td>
+</tr>
+<tr>
+<td><code>mutable</code>, <code>thread_local</code></td>
+<td><code>mutable int m_;</code></td>
+<td>not in the POD keyword set</td>
+</tr>
+<tr>
+<td>Bitfields</td>
+<td><code>unsigned b_ : 3;</code></td>
+<td><code>= 0</code> next to the bitfield width does not parse</td>
+</tr>
+<tr>
+<td>Arrays, including in multi-declarations</td>
+<td><code>int a[4];</code>, <code>int a_, b[2];</code></td>
+<td>elements are not tracked</td>
+</tr>
+<tr>
+<td>Function pointers</td>
+<td><code>int (*fn_)(int);</code></td>
+<td>declaration shape is ambiguous to the parser</td>
+</tr>
+<tr>
+<td>Anonymous <code>union</code>/<code>struct</code> members</td>
+<td><code>union { int a; } u_;</code></td>
+<td>unnamed type has no default</td>
+</tr>
+<tr>
+<td>Any member whose type is not on one line</td>
+<td></td>
+<td>the parser works line by line</td>
+</tr>
+</tbody>
+</table>
+<p>Declarations of these <strong>are</strong> still parsed, so they appear in <code>--report-only</code> with their<br />
+default withheld. Only the type is unknown to the fixer; the member itself is seen.</p>
+<h3 id="declarations-the-parser-does-not-see">Declarations the parser does not see</h3>
+<p>These never reach <code>--report-only</code>, so no default is possible until the line is rewritten:</p>
+<ul>
+<li>A member declared on the same line as its access specifier: <code>private: int x_;</code></li>
+<li>A macro call inside the class body that is not terminated by <code>;</code>; every line after it up<br />
+to the next <code>}</code> opening a block is skipped.</li>
+</ul>
+<p>Two members on one line (<code>int a_; int b_;</code>) are captured under one name with a garbled<br />
+type, so the default is withheld.</p>
+<p>Fixed as of 2026-10-27 and no longer skipped: trailing comments containing <code>(</code>/<code>)</code><br />
+(<code>int x_;  // range (0-9)</code>) and <code>class X final</code> / <code>class EXPORT X</code> headers; see tests 11-13.</p>
 <h2 id="workflow">Workflow</h2>
 <h3 id="choosing-a-mode">Choosing a mode</h3>
 <table>

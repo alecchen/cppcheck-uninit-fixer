@@ -188,7 +188,7 @@ Creates `.bak` backup files before any modification.
 
 **Important (cppcheck mode):** Always pass `.cpp` source files, not `.h` headers. cppcheck analyzes headers through the `.cpp` translation unit's `#include` directives. Passing only `.h` files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both `.cpp` and `.h` is harmless but redundant.
 
-**`--fast` mode exception:** `--fast` skips cppcheck and parses sources directly, so it accepts `.cpp` files, `.h`/`.hpp` files, and directories. Classes defined in a `.cpp` (internal classes, pimpl) are parsed along with headers. Passing a `.cpp` also picks up headers in the same directory.
+**`--fast` mode exception:** `--fast` skips cppcheck and parses sources directly, so it accepts `.cpp` files, `.h`/`.hpp` files, and directories. Classes defined in a `.cpp` (internal classes, pimpl) are parsed along with headers. Passing a `.cpp` also picks up headers in the same directory. Passing a header parses only that header; pass the directory (or the `.cpp` files) to cover more. `.c` files are never parsed.
 
 **Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing.
 
@@ -412,6 +412,40 @@ cppcheck -DA=1 -DB=1 -UC --enable=warning --inconclusive file.cpp
 - **Nested classes** are parsed correctly, but a member declared in a nested class belongs only to that class. `--fast` warns when it parses zero members, which usually means the paths point at no C++ sources.
 - **Preprocessor macros in member declarations** (`STATUS_FLAG flags_;`) are not parsed. They fall back to `{}`.
 - **Init-list mode** (`--init-list`) skips `#if`-guarded members due to colon and comma syntax constraints. In-class mode (default) handles them correctly.
+
+### Members the fixer skips
+
+`--fast` reports every parsed member it will not default in `-v` output as `(skipped)`. The full list:
+
+| Skipped | Example | Why |
+|---|---|---|
+| References | `int& r_;` | no binding target exists |
+| Class, struct, enum, typedef types | `std::string s_;`, `Color c_;` | they self-initialize, `= 0` would not compile |
+| Types that are macros | `STATUS_FLAG f_;` | macro is not recognized as a POD type |
+| `static` members | `static int count_;` | in-class init is illegal for non-const statics pre-C++17 |
+| `mutable`, `thread_local` | `mutable int m_;` | not in the POD keyword set |
+| Bitfields | `unsigned b_ : 3;` | `= 0` next to the bitfield width does not parse |
+| Arrays, including in multi-declarations | `int a[4];`, `int a_, b[2];` | elements are not tracked |
+| Function pointers | `int (*fn_)(int);` | declaration shape is ambiguous to the parser |
+| Anonymous `union`/`struct` members | `union { int a; } u_;` | unnamed type has no default |
+| Any member whose type is not on one line | | the parser works line by line |
+
+Declarations of these **are** still parsed, so they appear in `--report-only` with their
+default withheld. Only the type is unknown to the fixer; the member itself is seen.
+
+### Declarations the parser does not see
+
+These never reach `--report-only`, so no default is possible until the line is rewritten:
+
+- A member declared on the same line as its access specifier: `private: int x_;`
+- A macro call inside the class body that is not terminated by `;`; every line after it up
+  to the next `}` opening a block is skipped.
+
+Two members on one line (`int a_; int b_;`) are captured under one name with a garbled
+type, so the default is withheld.
+
+Fixed as of 2026-10-27 and no longer skipped: trailing comments containing `(`/`)`
+(`int x_;  // range (0-9)`) and `class X final` / `class EXPORT X` headers; see tests 11-13.
 
 ## Workflow
 

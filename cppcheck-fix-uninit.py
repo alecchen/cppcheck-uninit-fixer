@@ -166,32 +166,39 @@ def parse_findings(xml_root):
 
 
 def find_headers(sources, include_dirs=None, with_sources=False):
-    """Collect header files to parse for member declarations.
+    """Collect files to parse for member declarations.
 
-    Header files passed directly are included as-is; directories are
-    scanned non-recursively. With with_sources=True (fast mode), .cpp
-    files are collected too, so classes defined in a translation unit
-    (internal classes, pimpl) are seen. cppcheck mode leaves it False:
-    it analyzes .cpp files itself.
+    Header files passed directly are included as-is and nothing else is
+    added for them. A source file passed directly pulls in the headers
+    co-located with it, never other translation units. Directories are
+    scanned non-recursively: with with_sources=True (fast mode) for
+    sources too, so classes defined in a translation unit (internal
+    classes, pimpl) are seen. cppcheck mode leaves it False: it analyzes
+    .cpp files itself. C sources are never parsed: C has no in-class
+    initializers, and statements there look like declarations.
     """
     headers = set()
     dirs = set()
     hdr_exts = ('.h', '.hpp', '.hxx')
-    src_exts = ('.cpp', '.c', '.cc', '.cxx')
-    wanted = hdr_exts + src_exts if with_sources else hdr_exts
+    src_exts = ('.cpp', '.cc', '.cxx')
 
     for src in sources:
         a = os.path.abspath(src)
-        if os.path.isfile(a) and a.endswith(wanted):
-            headers.add(a)
-            # Fall through: a .cpp input still needs its co-located
-            # headers scanned, so do not continue here.
         if os.path.isdir(a):
             dirs.add(a)
             continue
-        d = os.path.dirname(a)
-        if d:
-            dirs.add(d)
+        if not os.path.isfile(a):
+            continue
+        if a.endswith(hdr_exts):
+            headers.add(a)
+            continue
+        if a.endswith(src_exts):
+            if with_sources:
+                headers.add(a)
+            # A source input still needs its co-located headers scanned.
+            d = os.path.dirname(a)
+            if d:
+                dirs.add(d)
     if include_dirs:
         dirs.update(include_dirs)
     for d in dirs:
@@ -199,7 +206,7 @@ def find_headers(sources, include_dirs=None, with_sources=False):
             continue
         try:
             for fn in os.listdir(d):
-                if fn.endswith(wanted):
+                if fn.endswith(hdr_exts) or (with_sources and fn.endswith(src_exts)):
                     headers.add(os.path.abspath(os.path.join(d, fn)))
         except PermissionError:
             continue
@@ -213,6 +220,17 @@ def find_headers(sources, include_dirs=None, with_sources=False):
 
 _DECL_KEYWORDS = {'public', 'private', 'protected', 'class', 'struct',
                   'const', 'volatile', 'static', 'mutable', 'using', 'friend'}
+
+# Words that may follow a class name without being the name itself.
+_CLASS_HEADER_WORDS = {'final', 'sealed', 'class', 'struct',
+                       'public', 'private', 'protected'}
+
+_COMMENT_RE = re.compile(r'/\*.*?\*/|//.*')
+
+
+def _strip_comment(line):
+    """Drop comments so declaration tests do not see text inside them."""
+    return _COMMENT_RE.sub('', line)
 
 
 def _split_declarators(body):
@@ -272,6 +290,11 @@ def _needs_default(line, mn):
     m = re.search(r'\b' + re.escape(mn) + r'\b', line)
     if not m:
         return False
+    # A declarator follows a type: previous char must be part of one.
+    # `_iter = _niter;` and `p->member_;` are statements, not declarations.
+    before = line[:m.start()].rstrip()
+    if before and not (before[-1].isalnum() or before[-1] in '_,*&>'):
+        return False
     rest = line[m.end():].lstrip()
     if rest.startswith('='):
         return False
@@ -310,8 +333,21 @@ def parse_member_types(headers):
         text = re.sub(r'//.*', '', text)
         text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
 
-        for cm in re.finditer(r'(?:class|struct)\s+(\w+)\s*(?::[^{]*)?\{', text):
-            cls_name = cm.group(1)
+        for cm in re.finditer(
+                r'\b(?:class|struct)\s+((?:[^;{}()]|\([^()]*\))+?)\s*'
+                r'(?::[^{]*)?\{', text):
+            # Header may carry export macros and `final` between the
+            # keyword and the name (`class API_EXPORT Foo final : B {`,
+            # `class DECLSPEC(X) Foo {`), and template args after it
+            # (`class Box<int> {`).
+            head = cm.group(1)
+            while re.search(r'<[^<>]*>', head):
+                head = re.sub(r'<[^<>]*>', ' ', head)
+            words = [w for w in re.findall(r'[A-Za-z_]\w*', head)
+                     if w not in _CLASS_HEADER_WORDS]
+            if not words:
+                continue
+            cls_name = words[-1]
             start, depth = cm.end(), 1
             end = start
             while depth > 0 and end < len(text):
@@ -331,6 +367,7 @@ def parse_member_types(headers):
             #   #endif         -> pop
             guard_chain = []  # list of lists: chain per nesting level
             brace_depth = 0   # >0 means inside a nested class/struct body
+            pending_body = False  # method signature seen, body starts later
 
             for raw_line in body.split('\n'):
                 s = raw_line.strip()
@@ -361,9 +398,16 @@ def parse_member_types(headers):
                 # Members of a nested class belong to that class, not this
                 # one. Skip anything inside a nested body, tracking depth so
                 # a nested class's own members are still recorded when the
-                # outer scan reaches it.
+                # outer scan reaches it. Method bodies are skipped the same
+                # way, including one whose `{` lands on a later line.
                 if brace_depth > 0:
                     brace_depth += s.count('{') - s.count('}')
+                    continue
+                if pending_body:
+                    pending_body = False
+                    d = s.count('{') - s.count('}')
+                    if d > 0:
+                        brace_depth = d
                     continue
 
                 # Skip non-declaration lines
@@ -371,12 +415,24 @@ def parse_member_types(headers):
                     'typedef','using ','friend','static_assert','enum','template',
                     'explicit','virtual','operator','constexpr','noexcept',
                     'override','final','default','delete','struct','class'))):
-                    # A nested class/struct opens a body we must skip over.
-                    if re.match(r'^(class|struct)\b.*\{\s*$', s):
-                        brace_depth = 1
+                    # A nested class/struct or an inline method body opens a
+                    # block we must skip over, even when it starts mid-line:
+                    #   int f() {          -> skip until the matching }
+                    d = s.count('{') - s.count('}')
+                    if d > 0:
+                        brace_depth = d
                     continue
                 if '(' in s or ')' in s:
+                    if s.rstrip().endswith(';'):
+                        continue  # plain declaration, no body to skip
+                    d = s.count('{') - s.count('}')
+                    if d > 0:
+                        brace_depth = d
+                    elif '{' not in s:
+                        # Signature only; its `{` is on a later line.
+                        pending_body = True
                     continue
+                s = _strip_comment(s)
 
                 for t, v in _parse_decl_line(s):
                     # Build the guard expression from the chain stack
@@ -592,15 +648,21 @@ def fix_in_class(header_files, findings, member_types):
 
         any_change = False
         cls_member_names = set(m[1] for m in cls_members)
+        pending_body = False
         for i, line in enumerate(lines):
-            s = line.strip()
+            s = _strip_comment(line).strip()
+            if pending_body:
+                pending_body = False
+                continue
             # Skip comments, preprocessor, access specifiers, functions
             if (not s or s.startswith(('//', '#', '/*', '*', 'public', 'private',
                                         'protected', 'typedef', 'using ', 'friend',
                                         'return', '}', '{'))):
                 continue
-            # Skip function declarations
+            # Skip function declarations, and the body that follows one
             if '(' in s or ')' in s:
+                if not s.endswith(';') and '{' not in s:
+                    pending_body = True
                 continue
 
             # Try to find member declarations we need to fix
@@ -629,7 +691,7 @@ def fix_in_class(header_files, findings, member_types):
                 if new_line is None:
                     continue
                 line = new_line
-                s = line.strip()
+                s = _strip_comment(line)
                 if VERBOSE:
                     print(f"    {os.path.basename(hdr)}: {mn} = {dv}", file=sys.stderr)
                 fixed += 1
@@ -663,13 +725,19 @@ def find_uninit_candidates(header_files, member_types):
         except Exception:
             continue
         seen = set()  # (class, member) already reported in this header
+        pending_body = False
         for i, line in enumerate(lines):
-            s = line.strip()
+            s = _strip_comment(line).strip()
+            if pending_body:
+                pending_body = False
+                continue
             if (not s or s.startswith(('//', '#', '/*', '*', 'public', 'private',
                                         'protected', 'typedef', 'using ', 'friend',
                                         'return', '}', '{'))):
                 continue
             if '(' in s or ')' in s:
+                if not s.endswith(';') and '{' not in s:
+                    pending_body = True
                 continue
             for cls in sorted(member_types):
                 for mn, info in sorted(member_types[cls].items()):
