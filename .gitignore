@@ -21,3 +21,4 @@ uninit_report.txt
 
 # Allow README.html (tracked in git despite *.html above)
 !README.html
+!EDITOR-CI.html

@@ -170,6 +170,7 @@ bear -- ./build_script.sh
 <p>Creates <code>.bak</code> backup files before any modification.</p>
 <p><strong>Important (cppcheck mode):</strong> Always pass <code>.cpp</code> source files, not <code>.h</code> headers. cppcheck analyzes headers through the <code>.cpp</code> translation unit's <code>#include</code> directives. Passing only <code>.h</code> files produces zero findings because cppcheck cannot flag uninitialized members without seeing the constructors. Passing both <code>.cpp</code> and <code>.h</code> is harmless but redundant.</p>
 <p><strong><code>--fast</code> mode exception:</strong> <code>--fast</code> skips cppcheck and parses sources directly, so it accepts <code>.cpp</code> files, <code>.h</code>/<code>.hpp</code> files, and directories. Classes defined in a <code>.cpp</code> (internal classes, pimpl) are parsed along with headers. Passing a <code>.cpp</code> also picks up headers in the same directory. Passing a header parses only that header; pass the directory (or the <code>.cpp</code> files) to cover more. <code>.c</code> files are never parsed.</p>
+<p><strong>CI gate:</strong> <code>--report-only --fail-on-findings</code> exits <code>1</code> when any member is found, so a build can fail on it. Off by default. See <code>EDITOR-CI.md</code> for pipeline and editor setups.</p>
 <p><strong>Include paths:</strong> If headers are in a different directory than the <code>.cpp</code> files, <code>-I</code> is required for <strong>both</strong> detection and fixing.</p>
 <ul>
 <li><strong>Bash script (<code>check_uninit_all.sh</code>):</strong> <code>-I</code> only affects cppcheck's analysis. Macro extraction only scans <code>*.h</code>/<code>*.hpp</code> files co-located with the source files. If your guarded members are in headers under an <code>-I</code> directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.</li>
@@ -522,6 +523,9 @@ to the next <code>}</code> opening a block is skipped.</li>
 type, so the default is withheld.</p>
 <p>Fixed as of 2026-10-27 and no longer skipped: trailing comments containing <code>(</code>/<code>)</code><br />
 (<code>int x_;  // range (0-9)</code>) and <code>class X final</code> / <code>class EXPORT X</code> headers; see tests 11-13.</p>
+<p>A whole class written on one line with an access specifier (<code>class X { private: int a_; };</code>)<br />
+yields zero members, so a shallow gate reports nothing for it. See <code>EDITOR-CI.md</code> for the<br />
+gate's own blind spots.</p>
 <h2 id="workflow">Workflow</h2>
 <h3 id="choosing-a-mode">Choosing a mode</h3>
 <table>

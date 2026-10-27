@@ -954,6 +954,8 @@ def main():
                          '--project is given.')
     ap.add_argument('--report-only', action='store_true',
                     help='Only print findings, do not modify')
+    ap.add_argument('--fail-on-findings', action='store_true',
+                    help='With --report-only: exit 1 when any finding exists, for CI gates')
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='Show detailed progress: found macros, cppcheck commands, '
                          'member types with guards, fix details')
@@ -1033,8 +1035,11 @@ def main():
         if VERBOSE and member_types:
             dump_member_types(member_types, strict=True)
         if args.report_only:
-            for hdr, i, cls, mn, dv in find_uninit_candidates(headers, member_types):
+            cands = find_uninit_candidates(headers, member_types)
+            for hdr, i, cls, mn, dv in cands:
                 print(f"  {hdr}:{i + 1}: {cls}::{mn} -> {dv}")
+            if args.fail_on_findings and cands:
+                sys.exit(1)
             return
         if args.init_list:
             print("Error: --fast only supports in-class defaults, not --init-list.",
@@ -1119,8 +1124,11 @@ def main():
                 print(f"      {cls}::{mname}", file=sys.stderr)
 
     if args.report_only:
-        for f in sorted(set(findings)):
+        found = sorted(set(findings))
+        for f in found:
             print(f"  {f[0]}:{f[1]}: {f[2]}::{f[3]}")
+        if args.fail_on_findings and found:
+            sys.exit(1)
         return
 
     # ---- Phase 4: Parse member types ----

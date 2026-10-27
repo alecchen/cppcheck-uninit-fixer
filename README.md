@@ -190,6 +190,8 @@ Creates `.bak` backup files before any modification.
 
 **`--fast` mode exception:** `--fast` skips cppcheck and parses sources directly, so it accepts `.cpp` files, `.h`/`.hpp` files, and directories. Classes defined in a `.cpp` (internal classes, pimpl) are parsed along with headers. Passing a `.cpp` also picks up headers in the same directory. Passing a header parses only that header; pass the directory (or the `.cpp` files) to cover more. `.c` files are never parsed.
 
+**CI gate:** `--report-only --fail-on-findings` exits `1` when any member is found, so a build can fail on it. Off by default. See `EDITOR-CI.md` for pipeline and editor setups.
+
 **Include paths:** If headers are in a different directory than the `.cpp` files, `-I` is required for **both** detection and fixing.
 
 - **Bash script (`check_uninit_all.sh`):** `-I` only affects cppcheck's analysis. Macro extraction only scans `*.h`/`*.hpp` files co-located with the source files. If your guarded members are in headers under an `-I` directory, those guards will still be checked by cppcheck's own config detection during the base pass, but the macros won't appear in the per-macro pass list.
@@ -446,6 +448,10 @@ type, so the default is withheld.
 
 Fixed as of 2026-10-27 and no longer skipped: trailing comments containing `(`/`)`
 (`int x_;  // range (0-9)`) and `class X final` / `class EXPORT X` headers; see tests 11-13.
+
+A whole class written on one line with an access specifier (`class X { private: int a_; };`)
+yields zero members, so a shallow gate reports nothing for it. See `EDITOR-CI.md` for the
+gate's own blind spots.
 
 ## Workflow
 

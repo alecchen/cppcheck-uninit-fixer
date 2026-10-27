@@ -525,4 +525,46 @@ shutil.rmtree(d, ignore_errors=True)
 print("Test 13 PASS  method bodies skipped in parse, report and fix")
 
 
-print("\nAll 13 --fast mode tests passed")
+# -----------------------------------------------------------------------
+# Test 14: --fail-on-findings gates CI, and stays off by default
+# -----------------------------------------------------------------------
+
+d = make_project({
+    'dirty.h': """\
+        class Dirty {
+        private:
+            int unset_;
+        };
+        """,
+    'clean.h': """\
+        class Clean {
+        private:
+            int set_ = 0;
+        };
+        """,
+})
+dirty = os.path.join(d, 'dirty.h')
+clean = os.path.join(d, 'clean.h')
+
+
+def gate(args):
+    return subprocess.run([sys.executable, FIXER, '--fast', '--report-only'] + args,
+                          cwd=d, capture_output=True, text=True).returncode
+
+
+assert gate([dirty]) == 0, "report-only must stay 0 by default"
+assert gate(['--fail-on-findings', dirty]) == 1, "gate must fail on findings"
+assert gate(['--fail-on-findings', clean]) == 0, "gate must pass on a clean file"
+# no inputs is a usage error, not a pass: callers guard the empty file list
+assert gate(['--fail-on-findings']) == 1, "no inputs must not silently pass a gate"
+
+# the flag is a report-only knob: fix mode still writes and exits 0
+r = subprocess.run([sys.executable, FIXER, '--fast', '--fail-on-findings', dirty],
+                   cwd=d, capture_output=True, text=True)
+assert r.returncode == 0, f"fix mode must not gate: {r.stderr[-300:]}"
+assert 'unset_ = 0' in open(dirty).read(), "fix mode must still apply defaults"
+shutil.rmtree(d, ignore_errors=True)
+print("Test 14 PASS  --fail-on-findings gates report-only, off by default")
+
+
+print("\nAll 14 --fast mode tests passed")

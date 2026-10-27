@@ -10,12 +10,13 @@ distclean: clean
 
 # Create a tarball of scripts and docs (excludes .cpp, LICENSE)
 archive:
-	git archive -o cppcheck-uninit-fixer.tar.gz --prefix=cppcheck-uninit-fixer/ HEAD '*.sh' '*.py' README.md README.html Makefile
+	git archive -o cppcheck-uninit-fixer.tar.gz --prefix=cppcheck-uninit-fixer/ HEAD '*.sh' '*.py' README.md README.html EDITOR-CI.md EDITOR-CI.html Makefile
 
-# Convert README.md -> README.html (GitHub style, code highlighting)
+# Convert *.md -> *.html (GitHub style, code highlighting)
 html:
-	rm -f README.html
+	rm -f README.html EDITOR-CI.html
 	cd markdown-to-html-github-style && node convert.js "cppcheck Uninit Member Detector" "" ../README.md
+	cd markdown-to-html-github-style && node convert.js "Editor and CI Integration" "" ../EDITOR-CI.md
 
 # Quick check: guard chain tracking + shell script tests + Python fixer tests
 check:

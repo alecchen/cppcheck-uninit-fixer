@@ -1,0 +1,582 @@
+
+      <html>
+        <head>
+          <title>Editor and CI Integration</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta charset="UTF-8">
+        </head>
+        <body>
+          <div id='content'>
+      <h1 id="editor-and-ci-integration">Editor and CI integration</h1>
+<p>How to get uninitialized-member findings in front of a developer without running the<br />
+fixer by hand. Pick the row that matches the team's existing workflow. An editor runs<br />
+cppcheck or clang-tidy in one build configuration; the CI and hook rows run the fixer's<br />
+<code>--fast</code> mode, which does not depend on configuration.</p>
+<table>
+<thead>
+<tr>
+<th>Where the team works</th>
+<th>Hook</th>
+<th>Detection</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>vim / neovim</td>
+<td>cppcheck in quickfix, or ALE</td>
+<td>cppcheck, one configuration</td>
+</tr>
+<tr>
+<td>VS Code</td>
+<td>C/C++ extension with cppcheck as linter</td>
+<td>cppcheck, one configuration</td>
+</tr>
+<tr>
+<td>VS Code</td>
+<td>clang-tidy via C/C++ extension</td>
+<td>clang-tidy, needs compile_commands.json</td>
+</tr>
+<tr>
+<td>GitHub</td>
+<td>Actions workflow on push and pull request</td>
+<td>fixer <code>--fast</code>, changed files</td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>.gitlab-ci.yml</code>, merge requests</td>
+<td>fixer <code>--fast</code>, changed files</td>
+</tr>
+<tr>
+<td>Neither</td>
+<td>git pre-commit hook</td>
+<td>fixer <code>--fast</code>, staged files</td>
+</tr>
+<tr>
+<td>Neither</td>
+<td>release checklist</td>
+<td>fixer <code>--fast</code>, whole tree</td>
+</tr>
+</tbody>
+</table>
+<p>Every editor option shares the same blind spot, and it is the reason this fixer exists. An<br />
+editor resolves a single set of <code>-D</code> flags, so a member behind <code>#ifdef FEATURE_X</code> is<br />
+visible only when the editor's configuration defines <code>FEATURE_X</code>. <code>--fast</code> parses the<br />
+source directly and ignores configuration. It is also the only mode that fits an editor or<br />
+CI budget: cppcheck mode runs one pass per extracted macro and needs a compilation<br />
+database.</p>
+<h2 id="gating-on-findings">Gating on findings</h2>
+<p><code>--report-only</code> exits <code>0</code> even when it finds problems, so pass <code>--fail-on-findings</code> to turn<br />
+it into a gate:</p>
+<pre><code class="hljs bash language-bash">python3 cppcheck-fix-uninit.py --fast --report-only --fail-on-findings src/
+</code></pre>
+<p>Exit <code>1</code> means at least one finding. Findings print one per line on stdout as<br />
+<code>path:line: Class::member -&gt; default</code>. The flag is off by default and only affects<br />
+<code>--report-only</code>, so existing scripts behave as before.</p>
+<p>Changed files only, deliberately. A whole-tree gate on an existing recipe goes red for<br />
+reasons the current author did not cause, and someone disables it within a week. Scoped to<br />
+the diff, it stays green until a new uninitialized member shows up.</p>
+<h2 id="github-actions">GitHub Actions</h2>
+<p><code>.github/workflows/uninit.yml</code>:</p>
+<pre><code class="hljs yaml language-yaml"><span class="hljs-attr">name:</span> <span class="hljs-string">uninit</span>
+
+<span class="hljs-attr">on:</span>
+  <span class="hljs-attr">push:</span>
+    <span class="hljs-attr">paths:</span> [<span class="hljs-string">&#x27;**/*.h&#x27;</span>, <span class="hljs-string">&#x27;**/*.hpp&#x27;</span>, <span class="hljs-string">&#x27;**/*.cpp&#x27;</span>, <span class="hljs-string">&#x27;**/*.cc&#x27;</span>]
+  <span class="hljs-attr">pull_request:</span>
+    <span class="hljs-attr">paths:</span> [<span class="hljs-string">&#x27;**/*.h&#x27;</span>, <span class="hljs-string">&#x27;**/*.hpp&#x27;</span>, <span class="hljs-string">&#x27;**/*.cpp&#x27;</span>, <span class="hljs-string">&#x27;**/*.cc&#x27;</span>]
+
+<span class="hljs-attr">jobs:</span>
+  <span class="hljs-attr">check:</span>
+    <span class="hljs-attr">runs-on:</span> <span class="hljs-string">ubuntu-latest</span>
+    <span class="hljs-attr">steps:</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">uses:</span> <span class="hljs-string">actions/checkout@v4</span>
+        <span class="hljs-attr">with:</span>
+          <span class="hljs-attr">fetch-depth:</span> <span class="hljs-number">0</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">uses:</span> <span class="hljs-string">actions/setup-python@v5</span>
+        <span class="hljs-attr">with:</span>
+          <span class="hljs-attr">python-version:</span> <span class="hljs-string">&#x27;3.11&#x27;</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">Fetch</span> <span class="hljs-string">fixer</span>
+        <span class="hljs-attr">run:</span> <span class="hljs-string">git</span> <span class="hljs-string">clone</span> <span class="hljs-string">--depth</span> <span class="hljs-number">1</span> <span class="hljs-string">https://github.com/alecchen/cppcheck-uninit-fixer.git</span> <span class="hljs-string">.fixer</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">Uninitialized</span> <span class="hljs-string">members</span> <span class="hljs-string">in</span> <span class="hljs-string">changed</span> <span class="hljs-string">files</span>
+        <span class="hljs-attr">run:</span> <span class="hljs-string">|
+          base=${{ github.event.pull_request.base.sha || github.event.before }}
+          [ -z &quot;$base&quot; ] || ! git cat-file -e &quot;$base^{commit}&quot; 2&gt;/dev/null &amp;&amp; exit 0
+          files=$(git diff --name-only &quot;$base&quot; HEAD -- &#x27;*.h&#x27; &#x27;*.hpp&#x27; &#x27;*.cpp&#x27; &#x27;*.cc&#x27;)
+          if [ -z &quot;$files&quot; ]; then echo &quot;no C++ changes&quot;; exit 0; fi
+          if ! python3 .fixer/cppcheck-fix-uninit.py --fast --report-only \
+                 --fail-on-findings $files; then
+            echo &quot;::error::uninitialized members in this change&quot;
+            exit 1
+          fi
+</span></code></pre>
+<p><code>fetch-depth: 0</code> is required. The default shallow clone has no base commit, so <code>git diff</code><br />
+fails and the job passes without checking anything.</p>
+<h2 id="gitlab-ci">GitLab CI</h2>
+<p><code>.gitlab-ci.yml</code>, works on self-hosted GitLab 19.x:</p>
+<pre><code class="hljs yaml language-yaml"><span class="hljs-attr">uninit:</span>
+  <span class="hljs-attr">image:</span> <span class="hljs-string">python:3.11-slim</span>
+  <span class="hljs-attr">stage:</span> <span class="hljs-string">test</span>
+  <span class="hljs-attr">variables:</span>
+    <span class="hljs-attr">GIT_DEPTH:</span> <span class="hljs-string">&quot;0&quot;</span>
+  <span class="hljs-attr">rules:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">if:</span> <span class="hljs-string">$CI_PIPELINE_SOURCE</span> <span class="hljs-string">==</span> <span class="hljs-string">&quot;merge_request_event&quot;</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">if:</span> <span class="hljs-string">$CI_COMMIT_BRANCH</span> <span class="hljs-string">==</span> <span class="hljs-string">$CI_DEFAULT_BRANCH</span>
+  <span class="hljs-attr">before_script:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-string">apt-get</span> <span class="hljs-string">update</span> <span class="hljs-string">&amp;&amp;</span> <span class="hljs-string">apt-get</span> <span class="hljs-string">install</span> <span class="hljs-string">-y</span> <span class="hljs-string">--no-install-recommends</span> <span class="hljs-string">git</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-string">git</span> <span class="hljs-string">clone</span> <span class="hljs-string">--depth</span> <span class="hljs-number">1</span> <span class="hljs-string">https://github.com/alecchen/cppcheck-uninit-fixer.git</span> <span class="hljs-string">.fixer</span>
+  <span class="hljs-attr">script:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-string">|
+      base=${CI_MERGE_REQUEST_DIFF_BASE_SHA:-$CI_COMMIT_BEFORE_SHA}
+      git cat-file -e &quot;$base^{commit}&quot; 2&gt;/dev/null || { echo &quot;no base commit, skipping&quot;; exit 0; }
+      files=$(git diff --name-only &quot;$base&quot; HEAD -- &#x27;*.h&#x27; &#x27;*.hpp&#x27; &#x27;*.cpp&#x27; &#x27;*.cc&#x27;)
+      if [ -z &quot;$files&quot; ]; then echo &quot;no C++ changes&quot;; exit 0; fi
+      python3 .fixer/cppcheck-fix-uninit.py --fast --report-only --fail-on-findings $files
+</span></code></pre>
+<p><code>GIT_DEPTH: "0"</code> for the same reason: without full history, <code>git diff</code> against the merge<br />
+base fails.</p>
+<h2 id="git-pre-commit-hook">git pre-commit hook</h2>
+<p>For a team with no pipeline. Install as <code>.git/hooks/pre-commit</code>, <code>chmod +x</code>:</p>
+<pre><code class="hljs bash language-bash"><span class="hljs-meta">#!/bin/sh</span>
+<span class="hljs-built_in">command</span> -v python3 &gt;/dev/null || <span class="hljs-built_in">exit</span> 0
+files=$(git diff --cached --name-only --diff-filter=ACM -- <span class="hljs-string">&#x27;*.h&#x27;</span> <span class="hljs-string">&#x27;*.hpp&#x27;</span> <span class="hljs-string">&#x27;*.cpp&#x27;</span> <span class="hljs-string">&#x27;*.cc&#x27;</span>)
+[ -z <span class="hljs-string">&quot;<span class="hljs-variable">$files</span>&quot;</span> ] &amp;&amp; <span class="hljs-built_in">exit</span> 0
+<span class="hljs-keyword">if</span> ! python3 .fixer/cppcheck-fix-uninit.py --fast --report-only --fail-on-findings <span class="hljs-variable">$files</span>; <span class="hljs-keyword">then</span>
+  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Fix in the editor, or re-run with --fast to apply defaults, then review the diff.&quot;</span>
+  <span class="hljs-built_in">exit</span> 1
+<span class="hljs-keyword">fi</span>
+</code></pre>
+<p>The hook must not run the fixer without <code>--report-only</code>; it would rewrite staged source in<br />
+the middle of a commit.</p>
+<h2 id="vim-and-neovim">vim and neovim</h2>
+<p>cppcheck in the quickfix list, no plugin. The custom template matters: the default one<br />
+appends the source line and a caret line, and the caret line matches nothing in<br />
+<code>errorformat</code>.</p>
+<pre><code class="hljs vim language-vim"><span class="hljs-comment">&quot; .vimrc</span>
+<span class="hljs-keyword">set</span> makeprg=cppcheck\ --enable=warning,style\ --inconclusive\ -q\ --template={<span class="hljs-keyword">file</span>}:{<span class="hljs-built_in">line</span>}:{column}:\ {severity}:\ {message}\ [{id}]\ %
+<span class="hljs-keyword">set</span> errorformat=%<span class="hljs-keyword">f</span>:%<span class="hljs-keyword">l</span>:%<span class="hljs-keyword">c</span>:\ %t%*[^:]:\ %<span class="hljs-keyword">m</span>
+</code></pre>
+<p><code>:make</code> fills the quickfix list, <code>:copen</code> opens it, <code>:cc 3</code> jumps to the third finding.<br />
+cppcheck 2.22 accepts <code>-q</code> and <code>-q -q</code> but rejects <code>-qq</code>; keep the single <code>-q</code>, which<br />
+suppresses the <code>Checking file ...</code> progress lines.</p>
+<p>With ALE (<a href="https://github.com/dense-analysis/ale">https://github.com/dense-analysis/ale</a>):</p>
+<pre><code class="hljs vim language-vim"><span class="hljs-keyword">let</span> <span class="hljs-variable">g:ale_linters</span> = {<span class="hljs-string">&#x27;cpp&#x27;</span>: [<span class="hljs-string">&#x27;cppcheck&#x27;</span>, <span class="hljs-string">&#x27;clangtidy&#x27;</span>]}
+<span class="hljs-keyword">let</span> <span class="hljs-variable">g:ale_cpp_cppcheck_options</span> = <span class="hljs-string">&#x27;--enable=warning --inconclusive&#x27;</span>
+</code></pre>
+<p>Findings land in the location list on save. <code>clangtidy</code> is optional and needs a<br />
+<code>compile_commands.json</code> to resolve include paths.</p>
+<h2 id="vs-code">VS Code</h2>
+<p>The C/C++ extension (<code>ms-vscode.cpptools</code>) has no uninitialized-member check of its own.<br />
+IntelliSense parses for completion and does no dataflow analysis, so a checker has to be<br />
+wired in.</p>
+<p>cppcheck, which needs no compile database:</p>
+<pre><code class="hljs jsonc language-jsonc"><span class="hljs-comment">// .vscode/settings.json</span>
+<span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;C_Cpp.intelliSenseEngine&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;default&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;cppcheck.cppcheckPath&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;/usr/local/bin/cppcheck&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;cppcheck.enable&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;cppcheck.args&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;--enable=warning,style&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;--inconclusive&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;--quiet&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;-q&quot;</span><span class="hljs-punctuation">]</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<p>Requires the third-party <code>cppcheck</code> extension by Joseph Benden, not just <code>cpptools</code>.</p>
+<p>clang-tidy, which needs the build's include paths:</p>
+<pre><code class="hljs jsonc language-jsonc"><span class="hljs-comment">// .vscode/settings.json</span>
+<span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;C_Cpp.codeAnalysis.clangTidy.enabled&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;C_Cpp.codeAnalysis.clangTidy.args&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;--checks=cppcoreguidelines-pro-type-member-init&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;C_Cpp.default.compileCommands&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;${workspaceFolder}/compile_commands.json&quot;</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<p>clang-tidy accepts <code>.clang-tidy</code> in the source tree instead of inline args:</p>
+<pre><code class="hljs yaml language-yaml"><span class="hljs-attr">Checks:</span> <span class="hljs-string">&#x27;cppcoreguidelines-pro-type-member-init&#x27;</span>
+<span class="hljs-attr">WarningsAsErrors:</span> <span class="hljs-string">&#x27;&#x27;</span>
+</code></pre>
+<p>Generate the database with <code>bear -- ./build.sh</code>, or with CMake's<br />
+<code>-DCMAKE_EXPORT_COMPILE_COMMANDS=ON</code>.</p>
+<h2 id="compiler-flags">Compiler flags</h2>
+<p>These cut exposure to uninitialized stack members without touching the source or changing<br />
+anyone's workflow, so they stack with every option above:</p>
+<pre><code class="hljs bash language-bash">clang++ -ftrivial-auto-var-init=pattern   <span class="hljs-comment"># fills stack objects with 0xAA</span>
+clang++ -ftrivial-auto-var-init=zero      <span class="hljs-comment"># fills with 0, hides the bug</span>
+</code></pre>
+<p><code>pattern</code> surfaces a forgotten member as a large wrong value. <code>zero</code> makes the member<br />
+behave as if initialized, which hides the defect, so it is the wrong choice for this job.<br />
+The flag covers stack objects and their members before the constructor runs; it does not<br />
+cover <code>new</code>. Catching stack objects only still covers the common case for recipe-local<br />
+structs.</p>
+<h2 id="known-gaps-in-the-gate">Known gaps in the gate</h2>
+<p>The gate is shallow. It fails on findings, and a file that yields none passes. One form<br />
+yields none and therefore passes silently:</p>
+<pre><code class="hljs cpp language-cpp"><span class="hljs-keyword">class</span> <span class="hljs-title class_">X</span> { <span class="hljs-keyword">private</span>: <span class="hljs-type">int</span> bad_; };   <span class="hljs-comment">// class on one line, member after the access specifier</span>
+</code></pre>
+<p><code>class X { int bad_; };</code> without a specifier is detected. A class body that opens on the<br />
+class-name line with ordinary one-member-per-line indentation is also detected. If the<br />
+first form is common in the codebase, add a full-tree <code>--fast --report-only</code> to the release<br />
+checklist instead of relying on the diff-scoped gate alone.</p>
+<h2 id="what-each-checker-misses">What each checker misses</h2>
+<table>
+<thead>
+<tr>
+<th>Checker</th>
+<th>Flags unset members</th>
+<th>Guarded (<code>#ifdef</code>) members</th>
+<th>Needs compile DB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cppcheck</td>
+<td>yes</td>
+<td>only the configurations it is given</td>
+<td>no</td>
+</tr>
+<tr>
+<td>clang-tidy</td>
+<td>yes, with <code>cppcoreguidelines-pro-type-member-init</code></td>
+<td>only the configuration it is given</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>clang <code>-Wall -Wextra</code></td>
+<td>no</td>
+<td>no</td>
+<td>no</td>
+</tr>
+<tr>
+<td>clang static analyzer</td>
+<td>only where the value is read in the same translation unit</td>
+<td>no</td>
+<td>no</td>
+</tr>
+<tr>
+<td>this fixer, <code>--fast</code></td>
+<td>yes</td>
+<td>yes, guard-independent</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>The fixer is the only row that covers guards without configuration, which is why it is<br />
+worth a run once per release even when the editor and CI are already in place.</p>
+<h2 id="recommended-adoption-order">Recommended adoption order</h2>
+<ol>
+<li><code>-ftrivial-auto-var-init=pattern</code> in debug builds. No adoption cost.</li>
+<li>cppcheck in the editor they already use. Catches the unguarded majority while typing.</li>
+<li>A diff-scoped gate in whatever review system exists: CI job, pre-commit hook, or the<br />
+review tool's diff check.</li>
+<li><code>--fast --report-only</code> once per release on the full tree, to cover guarded members and<br />
+to give the tool author a bug report that does not include source.</li>
+</ol>
+
+          </div>
+          <style type='text/css'>body {
+    font: 400 16px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #111;
+    background-color: #fbfbfb;
+    -webkit-text-size-adjust: 100%;
+    -webkit-font-feature-settings: "kern" 1;
+    -moz-font-feature-settings: "kern" 1;
+    -o-font-feature-settings: "kern" 1;
+    font-feature-settings: "kern" 1;
+    font-kerning: normal;
+    padding: 30px;
+}
+
+@media only screen and (max-width: 600px) {
+    body {
+        padding: 5px;
+    }
+    body>#content {
+        padding: 0px 20px 20px 20px !important;
+    }
+}
+
+body>#content {
+    margin: 0px;
+    max-width: 900px;
+    border: 1px solid #e1e4e8;
+    padding: 10px 40px;
+    padding-bottom: 20px;
+    border-radius: 2px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+summary {
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+hr {
+    color: #bbb;
+    background-color: #bbb;
+    height: 1px;
+    flex: 0 1 auto;
+    margin: 1em 0;
+    padding: 0;
+    border: none;
+}
+
+.hljs-operator {
+    color: #868686;
+    /* There is a bug where the syntax highlighter would pick no color for e.g. `&&` symbols in the code samples. Let's overwrite this */
+}
+
+
+/**
+ * Links
+ */
+
+a {
+    color: #0366d6;
+    text-decoration: none;
+}
+
+a:visited {
+    color: #0366d6;
+}
+
+a:hover {
+    color: #0366d6;
+    text-decoration: underline;
+}
+
+pre {
+    background-color: #f6f8fa;
+    border-radius: 3px;
+    font-size: 85%;
+    line-height: 1.45;
+    overflow: auto;
+    padding: 16px;
+}
+
+
+/**
+  * Code blocks
+  */
+
+code {
+    background-color: rgba(27, 31, 35, .05);
+    border-radius: 3px;
+    font-size: 85%;
+    margin: 0;
+    word-wrap: break-word;
+    padding: .2em .4em;
+    font-family: SFMono-Regular, Consolas, Liberation Mono, Menlo, Courier, monospace;
+}
+
+pre>code {
+    background-color: transparent;
+    border: 0;
+    display: inline;
+    line-height: inherit;
+    margin: 0;
+    overflow: visible;
+    padding: 0;
+    word-wrap: normal;
+    font-size: 100%;
+}
+
+
+/**
+ * Blockquotes
+ */
+
+blockquote {
+    margin-left: 30px;
+    margin-top: 0px;
+    margin-bottom: 16px;
+    border-left-width: 3px;
+    padding: 0 1em;
+    color: #828282;
+    border-left: 4px solid #e8e8e8;
+    padding-left: 15px;
+    font-size: 18px;
+    letter-spacing: -1px;
+    font-style: italic;
+}
+
+blockquote * {
+    font-style: normal !important;
+    letter-spacing: 0;
+    color: #6a737d !important;
+}
+
+
+/**
+ * Tables
+ */
+
+table {
+    border-spacing: 2px;
+    display: block;
+    font-size: 14px;
+    overflow: auto;
+    width: 100%;
+    margin-bottom: 16px;
+    border-spacing: 0;
+    border-collapse: collapse;
+}
+
+td {
+    padding: 6px 13px;
+    border: 1px solid #dfe2e5;
+}
+
+th {
+    font-weight: 600;
+    padding: 6px 13px;
+    border: 1px solid #dfe2e5;
+}
+
+tr {
+    background-color: #fff;
+    border-top: 1px solid #c6cbd1;
+}
+
+table tr:nth-child(2n) {
+    background-color: #f6f8fa;
+}
+
+
+/**
+ * Others
+ */
+
+img {
+    max-width: 100%;
+}
+
+p {
+    line-height: 24px;
+    font-weight: 400;
+    font-size: 16px;
+    color: #24292e;
+}
+
+ul {
+    margin-top: 0;
+}
+
+li {
+    color: #24292e;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+li+li {
+    margin-top: 0.25em;
+}
+
+* {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    color: #24292e;
+}
+
+a:visited {
+    color: #0366d6;
+}
+
+h1,
+h2,
+h3 {
+    border-bottom: 1px solid #eaecef;
+    color: #111;
+    /* Darker */
+}
+
+code>* {
+    font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace !important;
+}</style>
+          <style type='text/css'>pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em
+}
+code.hljs {
+  padding: 3px 5px
+}
+/*
+
+Atom One Dark by Daniel Gamage
+Original One Dark Syntax theme from https://github.com/atom/one-dark-syntax
+
+base:    #282c34
+mono-1:  #abb2bf
+mono-2:  #818896
+mono-3:  #5c6370
+hue-1:   #56b6c2
+hue-2:   #61aeee
+hue-3:   #c678dd
+hue-4:   #98c379
+hue-5:   #e06c75
+hue-5-2: #be5046
+hue-6:   #d19a66
+hue-6-2: #e6c07b
+
+*/
+.hljs {
+  color: #abb2bf;
+  background: #282c34
+}
+.hljs-comment,
+.hljs-quote {
+  color: #5c6370;
+  font-style: italic
+}
+.hljs-doctag,
+.hljs-keyword,
+.hljs-formula {
+  color: #c678dd
+}
+.hljs-section,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-deletion,
+.hljs-subst {
+  color: #e06c75
+}
+.hljs-literal {
+  color: #56b6c2
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: #98c379
+}
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-number {
+  color: #d19a66
+}
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-title {
+  color: #61aeee
+}
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: #e6c07b
+}
+.hljs-emphasis {
+  font-style: italic
+}
+.hljs-strong {
+  font-weight: bold
+}
+.hljs-link {
+  text-decoration: underline
+}</style>
+        </body>
+      </html>
